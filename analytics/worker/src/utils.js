@@ -136,7 +136,7 @@ export function businessDateSqlExpression(value = 'timestamp') {
 }
 
 export function businessDateTimeSqlExpression(value = 'timestamp') {
-  return `formatDateTime(${value}, '%Y-%m-%d %H:%M:%S', '${BUSINESS_TIME_ZONE}')`;
+  return `formatDateTime(${value}, '%Y-%m-%d %H:%i:%S', '${BUSINESS_TIME_ZONE}')`;
 }
 
 export function businessDateRangeCondition(startDate, endDate = getBusinessToday()) {

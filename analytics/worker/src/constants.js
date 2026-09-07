@@ -1,0 +1,73 @@
+export const RAW_DATASET = 'agnet_analytics';
+// 2026-08-26 至 27 日的异常流量误写入生产埋点，仅在查询时排除对应日期和出口 IP。
+export const ANALYTICS_DATA_FILTER = `NOT (
+  blob13 IN ('124.193.61.30', '64.118.148.223')
+  AND formatDateTime(timestamp, '%Y-%m-%d', 'Asia/Shanghai') IN ('2026-08-26', '2026-08-27')
+)`;
+export const DATASET = `(
+  SELECT *
+  FROM ${RAW_DATASET}
+  WHERE ${ANALYTICS_DATA_FILTER}
+)`;
+export const ALLOWED_EVENTS = new Set(['app_open', 'page_view', 'config_usage', 'ai_request', 'resource_click', 'agent_runtime']);
+export const AGENT_RUNTIME_STATUSES = new Set(['success', 'failed']);
+export const AGENT_RUNTIME_MAX_RETRY_COUNT = 3;
+export const AGENT_RUNTIME_KIND_PATTERN = /^[a-z0-9][a-z0-9._-]{0,39}$/;
+export const PROJECT_NAME_PATTERN = /^[a-zA-Z0-9._-]{1,80}$/;
+// 客户端上报版本号必须符合“2.x.x”格式，其余一律视为异常版本号，在 /track 静默丢弃。
+export const VERSION_FORMAT_PATTERN = /^2\.\d+\.\d+$/;
+export const NOTICE_KEY_PREFIX = 'project_notice:';
+export const LICENSE_CONFIG_KEY_PREFIX = 'project_license_config:';
+export const NOTICE_TITLE_MAX_LENGTH = 120;
+export const NOTICE_CONTENT_MAX_LENGTH = 20000;
+export const RESOURCE_TITLE_MAX_LENGTH = 160;
+export const RESOURCE_TAGS_MAX_LENGTH = 500;
+export const RESOURCE_DESCRIPTION_MAX_LENGTH = 1200;
+export const RESOURCE_MODAL_CONTENT_MAX_LENGTH = 50000;
+export const RESOURCE_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+export const RESOURCE_ALLOWED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+export const WORKER_CODE_VERSION = 'stats-redesign-v1';
+// GitHub 仓库标识默认值（dashboard 仓库统计用）。自部署 fork 时可用环境变量
+// GITHUB_REPO_FULL_NAME 覆盖为 "owner/repo"。
+export const GITHUB_REPO_FULL_NAME = 'FB208/OpenBidKit_Yibiao';
+export function githubRepoStatsCacheKey(fullName) {
+  return `github_repo_stats:${String(fullName || GITHUB_REPO_FULL_NAME).trim()}`;
+}
+export const GITHUB_REPO_STATS_CACHE_TTL_SECONDS = 1800;
+export const GITHUB_REPO_STATS_STALE_TTL_SECONDS = 604800;
+// 模型目录数据源默认值（models.dev 目录格式）。运行时可配置，优先级：
+// 管理端 KV 设置（model_info_cache:source_url）> 环境变量 MODEL_INFO_SOURCE_URL > 此默认值。
+// 支持指向任意第三方或自部署的 models.dev 兼容目录。
+export const DEFAULT_MODEL_INFO_SOURCE_URL = 'https://models.dev/api.json';
+export const MODEL_INFO_SOURCE_URL_KEY = 'model_info_cache:source_url';
+export const MODEL_INFO_CACHE_INDEX_KEY = 'model_info_cache:index';
+export const MODEL_INFO_CACHE_STATUS_KEY = 'model_info_cache:status';
+export const MODEL_INFO_CACHE_OVERRIDES_KEY = 'model_info_cache:overrides';
+export const MODEL_INFO_SYNC_CRON = '0 20 * * *';
+export const DEFAULT_FREE_LICENSE_DAYS = 30;
+
+export const CONFIG_USAGE_FIELDS = [
+  { key: 'fileParserProviders' },
+  { key: 'imageProviders' },
+  { key: 'imageModelStatuses' },
+  { key: 'bidAnalysisModes' },
+  { key: 'outlineModes' },
+  { key: 'tableRequirements' },
+  { key: 'wordControlEnabled' },
+  { key: 'minimumWords' },
+  { key: 'maximumWords' },
+  { key: 'sectionWords' },
+  { key: 'strictSectionWords' },
+  { key: 'contentConcurrencies' },
+  { key: 'contentGenerationActions' },
+  { key: 'enableConsistencyAudit' },
+  { key: 'consistencyRepairModes' },
+  { key: 'enableOriginalPlanCoverageAudit' },
+  { key: 'useMermaidImages' },
+  { key: 'useAiImages' },
+];
+
+export const MODEL_USAGE_FIELDS = [
+  { key: 'textModelUsage', requestType: 'text' },
+  { key: 'imageModelUsage', requestType: 'image' },
+];

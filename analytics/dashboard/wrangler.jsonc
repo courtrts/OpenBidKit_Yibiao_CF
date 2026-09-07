@@ -1,0 +1,20 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "agnet-analytics-dashboard",
+  "compatibility_date": "2026-05-14",
+  "workers_dev": true,
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  // 免费套餐适配：dashboard 也挂自定义域名（*.workers.dev 在部分网络不可达，
+  // 且免费套餐无需额外费用即可使用 Workers 自定义域名）。
+  // 部署到自有账户时，把下面 pattern 改成你的 <管理子域名>.<你的域名>，例如 admin.example.com。
+  "routes": [
+    { "pattern": "admin.toubiao.ztok.dpdns.org", "custom_domain": true }
+  ],
+  "assets": {
+    "directory": "./public",
+    "not_found_handling": "404-page"
+  }
+}

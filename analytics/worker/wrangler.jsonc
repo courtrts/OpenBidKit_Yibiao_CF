@@ -1,0 +1,61 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "agnet-analytics-api",
+  "main": "src/index.js",
+  "compatibility_date": "2026-05-14",
+  "workers_dev": true,
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "keep_vars": true,
+  // 免费套餐（Workers Free）适配：
+  // 1) cron 由 6 个合并为 1 个（免费套餐每账号最多 5 个 Cron Trigger，
+  //    合并后每天北京时间 01:00 顺序执行全部任务；所有汇总阶段幂等，中断可补跑）。
+  // 2) 自定义域名路由已启用并实测可用（免费套餐支持 Workers 自定义域名，
+  //    Cloudflare 自动创建代理 DNS 记录）；部署到其他账户时把 pattern
+  //    改成你的 <API子域名>.<你的域名>，例如 api.example.com。
+  "routes": [
+    { "pattern": "toubiao.ztok.dpdns.org", "custom_domain": true }
+  ],
+  "analytics_engine_datasets": [
+    {
+      "binding": "ANALYTICS",
+      "dataset": "agnet_analytics"
+    }
+  ],
+  "triggers": {
+    "crons": [
+      "0 17 * * *"
+    ]
+  },
+  "kv_namespaces": [
+    {
+      "binding": "NOTICE_STORE",
+      "id": "9f0a386cf57d45939adb8f5365c4a87a"
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "ANALYTICS_DB",
+      "database_name": "openbidkit-analytics",
+      "database_id": "59d209b6-7627-4fb0-9169-97114a6d25a1",
+      "migrations_dir": "analytics-migrations"
+    },
+    {
+      "binding": "RESOURCE_DB",
+      "database_name": "openbidkit-resources",
+      "database_id": "a442f108-f649-40da-8ee9-858e7763cb5d"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "AGENT_ERROR_BUCKET",
+      "bucket_name": "openbidkit-agent-errors"
+    },
+    {
+      "binding": "RESOURCE_BUCKET",
+      "bucket_name": "openbidkit"
+    }
+  ]
+}

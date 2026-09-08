@@ -3849,3 +3849,61 @@
   font-size: clamp(16px, 2vw, 22px);
   font-weight: 900;
 }
+
+/* [深色主题] 核心向导大量历史硬编码白色表面：深色下统一换成 token 表面，
+   消除"白岛"（白底 + token 浅色文字在深色下不可读）。
+   彩色按钮/胶囊上的白色文字（is-active 等）是主题无关的，有意保留不动。 */
+[data-theme='dark'] .analysis-result-card textarea:focus,
+[data-theme='dark'] .bid-analysis-task-pane,
+[data-theme='dark'] .bid-analysis-task-item.is-active,
+[data-theme='dark'] .bid-analysis-json-table,
+[data-theme='dark'] .bid-analysis-json-table-wrap,
+[data-theme='dark'] .bid-analysis-config-card,
+[data-theme='dark'] .bid-analysis-config-item:hover:not(.is-required),
+[data-theme='dark'] .global-facts-panel,
+[data-theme='dark'] .global-facts-item.is-active,
+[data-theme='dark'] .global-facts-edit-pane label,
+[data-theme='dark'] .global-facts-config-card,
+[data-theme='dark'] .content-outline-panel,
+[data-theme='dark'] .content-outline-item.is-active,
+[data-theme='dark'] .content-regenerate-popover,
+[data-theme='dark'] .content-generation-config-card,
+[data-theme='dark'] .export-progress-card,
+[data-theme='dark'] .export-template-select-dialog,
+[data-theme='dark'] .export-template-select-search,
+[data-theme='dark'] .export-template-select-row,
+[data-theme='dark'] .content-generation-config-row select,
+[data-theme='dark'] .outline-generation-config-card,
+[data-theme='dark'] .outline-word-control-grid input,
+[data-theme='dark'] .bid-section-selector-card,
+[data-theme='dark'] .outline-selection-dialog,
+[data-theme='dark'] .outline-selection-row,
+[data-theme='dark'] .outline-selection-row select,
+[data-theme='dark'] .outline-knowledge-document,
+[data-theme='dark'] .outline-knowledge-search,
+[data-theme='dark'] .outline-knowledge-folder.compact,
+[data-theme='dark'] .outline-knowledge-selected-item,
+[data-theme='dark'] .outline-progress-log p,
+[data-theme='dark'] .outline-tree-item.is-active,
+[data-theme='dark'] .outline-detail-panel,
+[data-theme='dark'] .outline-detail-body select {
+  background: var(--yb-surface);
+}
+
+[data-theme='dark'] .content-regenerate-popover-arrow {
+  fill: var(--yb-surface);
+}
+
+/* 输入控件文字统一回退到 token 浅色文字：浅色下已 token 化的不受影响，
+   少数硬编码深色文字的输入框在深色下由此保证可读 */
+[data-theme='dark'] .analysis-result-card textarea,
+[data-theme='dark'] .global-facts-edit-pane label,
+[data-theme='dark'] .export-template-select-search,
+[data-theme='dark'] .content-generation-config-row select,
+[data-theme='dark'] .outline-word-control-grid input,
+[data-theme='dark'] .outline-selection-row,
+[data-theme='dark'] .outline-selection-row select,
+[data-theme='dark'] .outline-knowledge-search,
+[data-theme='dark'] .outline-detail-body select {
+  color: var(--yb-text);
+}

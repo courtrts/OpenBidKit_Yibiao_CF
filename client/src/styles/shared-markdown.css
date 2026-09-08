@@ -728,3 +728,42 @@
   color: var(--yb-text-muted);
 }
 
+
+/* [深色主题] Markdown 渲染/编辑表面：白底与白色装饰渐变换成 token 表面，
+   边框换成 token 边框；文字统一回退 token 浅色文字（已 token 化的不受影响）。 */
+[data-theme='dark'] .markdown-viewer,
+[data-theme='dark'] .markdown-viewer.export-format-preview,
+[data-theme='dark'] .markdown-viewer .markdown-table-scroll,
+[data-theme='dark'] .markdown-viewer td,
+[data-theme='dark'] .markdown-viewer td:first-child,
+[data-theme='dark'] .mermaid-preview-card,
+[data-theme='dark'] .image-preview-card,
+[data-theme='dark'] .image-preview-close,
+[data-theme='dark'] .image-preview-close:hover,
+[data-theme='dark'] .markdown-empty-state,
+[data-theme='dark'] .markdown-fullscreen-trigger:hover:not(:disabled),
+[data-theme='dark'] .markdown-fullscreen-close:hover,
+[data-theme='dark'] .markdown-fullscreen-content > .resource-detail-markdown,
+[data-theme='dark'] .markdown-editor,
+[data-theme='dark'] .markdown-editor-toolbar,
+[data-theme='dark'] .markdown-editor-textarea,
+[data-theme='dark'] .markdown-editor-textarea:disabled,
+[data-theme='dark'] .markdown-editor-fullscreen-body {
+  background: var(--yb-surface);
+}
+
+[data-theme='dark'] .markdown-editor-fullscreen-dialog {
+  background: var(--yb-bg);
+}
+
+[data-theme='dark'] .image-preview-card,
+[data-theme='dark'] .markdown-fullscreen-content > .resource-detail-markdown,
+[data-theme='dark'] .markdown-editor-fullscreen-body {
+  border-color: var(--yb-border);
+}
+
+[data-theme='dark'] .markdown-viewer th,
+[data-theme='dark'] .markdown-viewer td,
+[data-theme='dark'] .markdown-editor-textarea {
+  color: var(--yb-text);
+}

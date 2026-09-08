@@ -453,3 +453,81 @@
   gap: 26px;
   overflow: auto;
 }
+
+/* [In-progress task tray] Floats at the bottom-right of the main content area; automatically hidden when there are no tasks,
+   so users can always check and jump to tasks that are running or paused (resumable) even when leaving the page / restarting the app */
+.background-task-tray {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 300px;
+  pointer-events: none;
+}
+
+.background-task-item {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--yb-border);
+  border-radius: var(--yb-radius-md);
+  background: var(--yb-surface);
+  box-shadow: var(--yb-shadow-lg);
+  color: var(--yb-text);
+  cursor: pointer;
+  font-size: 13px;
+  text-align: left;
+}
+
+.background-task-item:hover {
+  border-color: var(--yb-primary);
+}
+
+.background-task-dot {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  background: var(--yb-primary);
+  border-radius: var(--yb-radius-pill);
+  box-shadow: 0 0 0 6px rgba(33, 116, 253, 0.12);
+  animation: agent-runtime-pulse 1.2s ease-in-out infinite;
+}
+
+.background-task-dot.is-paused {
+  background: var(--yb-warning, #d97706);
+  box-shadow: 0 0 0 6px rgba(217, 119, 6, 0.14);
+  animation: none;
+}
+
+.background-task-item-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+
+.background-task-item-copy strong {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.background-task-item-copy span {
+  font-size: 12px;
+  color: var(--yb-text-muted);
+  opacity: 0.75;
+}
+
+.background-task-item-action {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--yb-primary);
+}

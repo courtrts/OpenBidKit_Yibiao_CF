@@ -1,6 +1,7 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import type { ReactNode } from 'react';
 import AgentRuntimeStatusBar from '../app/AgentRuntimeStatusBar';
+import BackgroundTaskTray from '../app/BackgroundTaskTray';
 import type { SectionId } from '../shared/types/navigation';
 import Sidebar from './Sidebar';
 
@@ -24,6 +25,7 @@ function AppShell({ activeSection, children, developerMode, onSectionChange }: A
           <section className="content-shell" aria-label="主内容">
             {children}
           </section>
+          <BackgroundTaskTray onSectionChange={onSectionChange} />
         </main>
       </div>
     </Tooltip.Provider>

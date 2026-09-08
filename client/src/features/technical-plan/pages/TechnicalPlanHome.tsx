@@ -339,6 +339,7 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
   const [pendingWordControlWarningTaskId, setPendingWordControlWarningTaskId] = useState<string | null>(null);
   const [savingSortBeforeLeave, setSavingSortBeforeLeave] = useState(false);
   const [workflowSwitchRequest, setWorkflowSwitchRequest] = useState<WorkflowSwitchRequest | null>(null);
+  const [resetDialogOpen, setResetDialogOpen] = useState(false);
   const [switchingWorkflow, setSwitchingWorkflow] = useState(false);
   const [petInstallDialogOpen, setPetInstallDialogOpen] = useState(false);
   const [installingPetPlugin, setInstallingPetPlugin] = useState(false);
@@ -1076,12 +1077,14 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
     if (saved) setState((prev) => ({ ...prev, ...saved }));
   };
 
-  const resetTechnicalPlan = async () => {
+  const resetTechnicalPlan = () => {
     if (isResetting) return;
-    if (!window.confirm('会清空整个技术方案编写进度，是否确认？')) {
-      return;
-    }
+    setResetDialogOpen(true);
+  };
 
+  const confirmResetTechnicalPlan = async () => {
+    if (isResetting) return;
+    setResetDialogOpen(false);
     setIsResetting(true);
     showToast('正在重置技术方案，将停止后台任务并清理工作区文件，请稍候…', 'info');
     try {
@@ -1494,6 +1497,24 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
             <button type="button" className="secondary-action" onClick={() => setPetInstallDialogOpen(false)} disabled={installingPetPlugin}>取消</button>
             <button type="button" className="primary-action" onClick={() => { void installPetPluginAndOpenChat(); }} disabled={installingPetPlugin}>
               {installingPetPlugin ? '正在安装...' : '安装并启用'}
+            </button>
+          </>
+        )}
+      />
+
+      <AppDialog
+        open={resetDialogOpen}
+        onOpenChange={(open) => !open && setResetDialogOpen(false)}
+        kicker="危险操作"
+        title="重置技术方案"
+        description="将清空当前技术方案的全部编写进度：目录、全局事实与已生成正文，并停止相关后台任务。此操作无法撤销。"
+        actions={(
+          <>
+            <button type="button" className="secondary-action" onClick={() => setResetDialogOpen(false)} disabled={isResetting}>
+              取消
+            </button>
+            <button type="button" className="primary-action" onClick={() => { void confirmResetTechnicalPlan(); }} disabled={isResetting}>
+              {isResetting ? '正在重置…' : '确认重置'}
             </button>
           </>
         )}

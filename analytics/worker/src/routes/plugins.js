@@ -1,4 +1,4 @@
-import { corsHeaders, internalErrorMessage, json, methodNotAllowed, requireAdmin, unauthorized } from '../http.js';
+import { corsHeaders, internalErrorMessage, json, methodNotAllowed, rejectOversizedBody, requireAdmin, unauthorized } from '../http.js';
 import {
   deletePlugin,
   incrementPluginDownload,
@@ -33,6 +33,9 @@ export async function handlePublicPluginDownload(request, env) {
   if (request.method !== 'POST') {
     return methodNotAllowed();
   }
+
+  const oversized = rejectOversizedBody(request, 2048);
+  if (oversized) return oversized;
 
   let body;
   try {

@@ -29,6 +29,9 @@ export async function isTrackVersionBlocked(env, projectName, version) {
         SELECT version FROM version_blocks WHERE project_name = ?
       `).bind(projectName).all();
       entry = { at: now, versions: new Set((result.results || []).map((row) => String(row.version || ''))) };
+      // projectName 来自公开请求且仅受格式约束，随机伪造值会让缓存无限增长；
+      // 超上限时直接清空重建（TTL 内的少量重复读可接受）。
+      if (versionBlocksCache.size >= 512) versionBlocksCache.clear();
       versionBlocksCache.set(projectName, entry);
     }
     return entry.versions.has(String(version ?? ''));

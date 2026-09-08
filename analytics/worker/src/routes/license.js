@@ -1,4 +1,4 @@
-import { internalErrorMessage, json, methodNotAllowed, requireAdmin, unauthorized } from '../http.js';
+import { internalErrorMessage, json, methodNotAllowed, rejectOversizedBody, requireAdmin, unauthorized } from '../http.js';
 import { readLicenseConfig, saveLicenseConfig } from '../services/licenseStore.js';
 import { signPayload, verifySignedObject } from '../services/licenseCrypto.js';
 import { isValidProjectName, normalizeText } from '../utils.js';
@@ -68,6 +68,10 @@ export async function handleLicenseActivate(request, env) {
   if (request.method !== 'POST') {
     return methodNotAllowed();
   }
+
+  // 激活是全 worker 单请求 CPU 最重的公开路径（验签+KV+签名），先拒大 body
+  const oversized = rejectOversizedBody(request, 16384);
+  if (oversized) return oversized;
 
   let body;
   try {

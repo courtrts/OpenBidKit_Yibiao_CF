@@ -452,7 +452,9 @@ async function mirrorPluginPackage(env, resolved, existing) {
     packageReady = true;
   } catch (error) {
     if (Number(error?.statusCode)) throw error;
-    throw createPluginError(`插件安装包写入 R2 失败：${error?.message || String(error)}`, 502);
+    // 内部异常原文（绑定名/对象键/上游 message）只进日志，不进对外错误
+    console.error('[analytics] plugin package publish failed', error?.message || String(error));
+    throw createPluginError('插件安装包写入存储失败', 502);
   } finally {
     await env.RESOURCE_BUCKET.delete(stagingKey).catch(() => undefined);
     if (!packageReady) {

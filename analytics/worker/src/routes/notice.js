@@ -11,6 +11,7 @@ import {
   writeLatestNotice,
 } from '../services/noticeStore.js';
 import { getRequestClientIp, isValidProjectName, normalizeText, shouldSkipDuplicateWrite } from '../utils.js';
+import { rejectOversizedBody } from '../http.js';
 
 export async function handlePublicNotice(request, env, url) {
   if (request.method !== 'GET') {
@@ -41,8 +42,11 @@ export async function handlePublicNoticeDelivered(request, env) {
   }
 
   if (!env.RESOURCE_DB) {
-    return json({ code: 500, message: 'RESOURCE_DB is not configured' }, { status: 500 });
+    return json({ code: 500, message: 'notice database is not configured' }, { status: 500 });
   }
+
+  const oversized = rejectOversizedBody(request, 2048);
+  if (oversized) return oversized;
 
   let body;
   try {

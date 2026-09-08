@@ -66,22 +66,6 @@ export function safePage(value) {
   return Math.min(1000, Math.max(1, Math.floor(page)));
 }
 
-export function isoDateDaysAgo(days) {
-  return getBusinessDateDaysAgo(days);
-}
-
-export function daysSinceIsoDate(value) {
-  return daysSinceBusinessDate(value);
-}
-
-export function daysSinceBusinessDate(value) {
-  const date = new Date(`${String(value || '').slice(0, 10)}T00:00:00.000Z`);
-  const today = new Date(`${getBusinessToday()}T00:00:00.000Z`);
-  if (Number.isNaN(date.getTime()) || Number.isNaN(today.getTime())) return NaN;
-
-  return Math.floor((today.getTime() - date.getTime()) / 86400000);
-}
-
 export function addIsoDays(value, days) {
   const date = new Date(`${String(value || '').slice(0, 10)}T00:00:00.000Z`);
   if (Number.isNaN(date.getTime())) return '';
@@ -201,17 +185,5 @@ export async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
   }
 }
 
-export function formatNoticeTime(date = new Date()) {
-  const parts = new Intl.DateTimeFormat('zh-CN', {
-    timeZone: BUSINESS_TIME_ZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  }).formatToParts(date);
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${values.year}-${values.month}-${values.day} ${values.hour}:${values.minute}:${values.second}`;
-}
+// 与 formatBusinessDateTime 完全同语义，保留导出名以兼容既有调用方。
+export const formatNoticeTime = formatBusinessDateTime;

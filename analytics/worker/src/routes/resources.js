@@ -53,7 +53,7 @@ export async function handleResourceImage(request, env, url) {
   }
 
   if (!env.RESOURCE_BUCKET) {
-    return json({ code: 500, message: 'RESOURCE_BUCKET is not configured' }, { status: 500 });
+    return json({ code: 500, message: 'resource storage is not configured' }, { status: 500 });
   }
 
   const key = normalizeImageKey(url.searchParams.get('key'));
@@ -81,7 +81,7 @@ export async function handleAdminResources(request, env, url) {
   }
 
   if (!env.RESOURCE_DB) {
-    return json({ code: 500, message: 'RESOURCE_DB is not configured' }, { status: 500 });
+    return json({ code: 500, message: 'resource database is not configured' }, { status: 500 });
   }
 
   if (request.method === 'GET') {
@@ -192,7 +192,7 @@ async function handleAdminSaveResource(request, env, url) {
   let imageKey = oldImageKey;
 
   if (imageFile && !env.RESOURCE_BUCKET) {
-    return json({ code: 500, message: 'RESOURCE_BUCKET is not configured' }, { status: 500 });
+    return json({ code: 500, message: 'resource storage is not configured' }, { status: 500 });
   }
 
   const body = {
@@ -286,8 +286,4 @@ async function deleteStoredImage(env, imageKey) {
   }
 
   await env.RESOURCE_BUCKET.delete(key);
-}
-
-export function buildPreviewImageUrl(origin, imageKey) {
-  return buildResourceImageUrl(origin, imageKey);
 }

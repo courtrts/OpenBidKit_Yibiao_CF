@@ -1,6 +1,6 @@
 import { json, methodNotAllowed, requireAdmin, unauthorized } from '../http.js';
 import { blockIpAndDeleteStatsClients, unblockIpAndReleaseStatsClients } from '../services/analyticsStatsStore.js';
-import { listBlockedIps } from '../services/ipBlockStore.js';
+import { listBlockedIps, loadBlockedIps } from '../services/ipBlockStore.js';
 import {
   addBusinessDateDays,
   getBusinessToday,
@@ -12,14 +12,16 @@ import {
 } from '../utils.js';
 
 // 返回客户端启动检查所需的封禁列表和公网出口 IP。
+// 复用 isRequestIpBlocked 的 60s 进程内缓存：装机量线性放大的启动必调接口
+// 不必每次都打 D1（生效延迟上限与封禁判断本身一致）。
 export async function handlePublicIpBlocks(request, env) {
   if (request.method !== 'GET') return methodNotAllowed();
   try {
-    const entries = await listBlockedIps(env);
+    const blockedIps = await loadBlockedIps(env);
     return json({
       code: 0,
       clientIp: getRequestClientIp(request),
-      blockedIps: entries.map((item) => item.ip),
+      blockedIps,
     }, { headers: { 'Cache-Control': 'no-store' } });
   } catch {
     return json({ code: 0, clientIp: '', blockedIps: [] }, { headers: { 'Cache-Control': 'no-store' } });

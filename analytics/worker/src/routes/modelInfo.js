@@ -185,7 +185,7 @@ export async function handleAdminModelInfoSource(request, env) {
       }, { headers: { 'Cache-Control': 'no-store' } });
     } catch (error) {
       console.error('[analytics] model info source save failed', error?.message || String(error));
-      return json({ code: 400, message: error?.message || 'invalid sourceUrl' }, { status: 400 });
+      return json({ code: 400, message: internalErrorMessage(error, 'invalid sourceUrl') }, { status: 400 });
     }
   }
 

@@ -62,7 +62,8 @@ export function safeStatsRange(value, defaultRange = 'history') {
 export function safePage(value) {
   const page = Number(value || 1);
   if (!Number.isFinite(page)) return 1;
-  return Math.max(1, Math.floor(page));
+  // 上限 clamp：深分页的 OFFSET 会线性放大 AE 扫描量，正常使用远达不到
+  return Math.min(1000, Math.max(1, Math.floor(page)));
 }
 
 export function isoDateDaysAgo(days) {

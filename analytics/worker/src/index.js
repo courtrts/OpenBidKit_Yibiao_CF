@@ -37,7 +37,7 @@ const routes = new Map([
   ['/notice/delivered', handlePublicNoticeDelivered],
   ['/model-info', handlePublicModelInfo],
   ['/resources', handlePublicResources],
-  ['/resource-image', handleResourceImage],
+  ['/resource-image', safe(handleResourceImage)],
   ['/plugins', handlePublicPlugins],
   ['/plugins/download', handlePublicPluginDownload],
   // 管理路由统一套 safe() 错误兜底（D1/KV/AE 异常 → 带 CORS 的 JSON 500 + 日志）

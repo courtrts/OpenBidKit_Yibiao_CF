@@ -573,3 +573,8 @@
   background: rgba(23, 29, 43, 0.88);
   border: 1px solid rgba(42, 50, 69, 0.92);
 }
+
+/* 托盘内联暂停按钮：与“查看”同位，悬停加强提示可点 */
+.background-task-item-pause:hover {
+  color: var(--yb-warning-deep);
+}

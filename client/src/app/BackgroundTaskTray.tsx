@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { TaskEventTask } from '../shared/types/ipc';
 import type { SectionId } from '../shared/types/navigation';
 
@@ -43,6 +43,9 @@ const TASK_LABEL_BY_TYPE: Record<string, string> = {
 };
 
 const TRAY_STATUSES = new Set(['running', 'pausing', 'paused']);
+// 主进程提供暂停能力的两类任务；其余任务尚无取消/暂停 IPC，不显示暂停按钮
+const PAUSABLE_TASK_TYPES = new Set(['content-generation', 'feasibility-content']);
+const TERMINAL_NOTIFICATION_STATUSES = new Set(['success', 'error']);
 
 interface BackgroundTaskTrayProps {
   onSectionChange: (section: SectionId) => void;
@@ -50,8 +53,22 @@ interface BackgroundTaskTrayProps {
 
 // 后台任务托盘：应用重启后、离开页面时，进行中和已暂停（可继续）的任务
 // 在这里持续可见，点击直达对应板块；全部完成后自动收起不占位。
+// 任务到达终态时发系统通知（点击直达），长任务等待不再依赖用户手动回看。
 function BackgroundTaskTray({ onSectionChange }: BackgroundTaskTrayProps) {
   const [tasks, setTasks] = useState<TaskEventTask[]>([]);
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  const notifiedRef = useRef(new Set<string>());
+
+  const formatElapsed = (startedAt: string, nowMs: number) => {
+    const startedMs = Date.parse(startedAt);
+    if (!Number.isFinite(startedMs)) return '';
+    const totalSeconds = Math.max(0, Math.floor((nowMs - startedMs) / 1000));
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    const pad = (value: number) => String(value).padStart(2, '0');
+    return hours > 0 ? `${hours}:${pad(minutes)}:${pad(seconds)}` : `${pad(minutes)}:${pad(seconds)}`;
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -80,12 +97,55 @@ function BackgroundTaskTray({ onSectionChange }: BackgroundTaskTrayProps) {
         refresh();
       }, 300);
     };
-    const unsubscribe = window.yibiao.tasks.onTaskEvent(scheduleRefresh);
+
+    // 终态去重：同一任务的同一终态只通知一次（事件可能因重试/快照重放多次到达）
+    const notifyIfTerminal = (task: TaskEventTask) => {
+      if (!TERMINAL_NOTIFICATION_STATUSES.has(task.status)) return;
+      const dedupeKey = `${task.task_id}:${task.status}`;
+      if (notifiedRef.current.has(dedupeKey)) return;
+      notifiedRef.current.add(dedupeKey);
+      const label = TASK_LABEL_BY_TYPE[task.type] || task.type;
+      const finished = task.status === 'success';
+      try {
+        const notification = new Notification(finished ? `${label}已完成` : `${label}失败`, {
+          body: finished ? '点击查看结果' : String(task.error || '点击查看详情').slice(0, 120),
+        });
+        notification.onclick = () => {
+          window.focus();
+          notification.close();
+          onSectionChange(TASK_SECTION_BY_TYPE[task.type] || 'technical-plan');
+        };
+      } catch {
+        // 系统通知不可用时静默跳过，不影响主流程
+      }
+    };
+
+    const unsubscribe = window.yibiao.tasks.onTaskEvent((event) => {
+      const task = (event as { task?: TaskEventTask } | null)?.task;
+      if (task) notifyIfTerminal(task);
+      scheduleRefresh();
+    });
     return () => {
       cancelled = true;
       if (refreshTimer) clearTimeout(refreshTimer);
       unsubscribe();
     };
+  }, [onSectionChange]);
+
+  // 有运行中任务时每秒走表，驱动“已运行时长”显示
+  const hasRunning = tasks.some((task) => task.status === 'running');
+  useEffect(() => {
+    if (!hasRunning) return undefined;
+    const timer = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [hasRunning]);
+
+  const pauseTask = useCallback((task: TaskEventTask) => {
+    if (task.type === 'content-generation') {
+      void window.yibiao.tasks.pauseContentGeneration();
+    } else if (task.type === 'feasibility-content') {
+      void window.yibiao.tasks.pauseFeasibilityContent();
+    }
   }, []);
 
   const jumpToTask = useCallback(
@@ -101,8 +161,11 @@ function BackgroundTaskTray({ onSectionChange }: BackgroundTaskTrayProps) {
     <aside className="background-task-tray" aria-label="进行中的任务">
       {tasks.map((task) => {
         const paused = task.status === 'paused' || task.status === 'pausing';
+        const running = task.status === 'running';
+        const pausable = running && PAUSABLE_TASK_TYPES.has(task.type);
         const progress = Math.max(0, Math.min(100, Math.round(Number(task.progress) || 0)));
         const label = TASK_LABEL_BY_TYPE[task.type] || task.type;
+        const elapsed = running ? formatElapsed(task.started_at, nowTick) : '';
         return (
           <button
             key={task.task_id}
@@ -117,10 +180,32 @@ function BackgroundTaskTray({ onSectionChange }: BackgroundTaskTrayProps) {
               <span>
                 {paused
                   ? '已暂停，可继续'
-                  : `${progress}%`}
+                  : `${progress}%${elapsed ? ` · 已运行 ${elapsed}` : ''}`}
               </span>
             </span>
-            <span className="background-task-item-action">查看</span>
+            {pausable ? (
+              <span
+                className="background-task-item-action background-task-item-pause"
+                role="button"
+                tabIndex={0}
+                aria-label={`暂停${label}任务`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  pauseTask(task);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    pauseTask(task);
+                  }
+                }}
+              >
+                暂停
+              </span>
+            ) : (
+              <span className="background-task-item-action">查看</span>
+            )}
           </button>
         );
       })}

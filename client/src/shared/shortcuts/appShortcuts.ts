@@ -59,7 +59,8 @@ export function useGlobalShortcuts(onOpenCheatSheet: (open: boolean) => void): v
         dispatchAppShortcut('step-next');
         return;
       }
-      if (event.key === '?' && !mod && !event.altKey && !isTypingTarget(event.target)) {
+      // 中文输入法下 Shift+/ 输出全角 ？，同样要能打开速记面板
+      if ((event.key === '?' || event.key === '？') && !mod && !event.altKey && !isTypingTarget(event.target)) {
         event.preventDefault();
         onOpenCheatSheet(true);
       }

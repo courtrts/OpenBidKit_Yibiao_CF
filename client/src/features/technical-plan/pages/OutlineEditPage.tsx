@@ -2,7 +2,7 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties, DragEvent } from 'react';
 import { trackConfigUsage } from '../../../shared/analytics/analytics';
-import { AppSwitch, ProgressBar, useToast } from '../../../shared/ui';
+import { AppDialog, AppSwitch, ProgressBar, useToast } from '../../../shared/ui';
 import type { BackgroundTaskState, OutlineSelectionItem, SaveOutlineRequest, SaveOutlineSelectionRequest, TechnicalPlanWorkflowKind } from '../types';
 import type { KnowledgeBaseIndex, KnowledgeDocument } from '../../knowledge-base/types';
 import { OUTLINE_CONTENT_MODE_LABELS } from '../../../shared/types';
@@ -841,14 +841,36 @@ function OutlineEditPage({
     }
   };
 
-  const removeItem = async (itemId: string) => {
+  // 删除是破坏性最大的目录操作（子树连同已生成正文一起清空且不可恢复），
+  // 先弹确认再执行；其余页面删除均有确认，这里补齐同一约定。
+  const [deleteTarget, setDeleteTarget] = useState<{ itemId: string; title: string; removedCount: number } | null>(null);
+
+  const removeItem = (itemId: string) => {
     if (!outlineData || sorting || outlineMutationLocked) {
       return;
     }
+    const removedItem = findOutlineItem(outlineData.outline, itemId);
+    const removedIds = removedItem ? [...collectOutlineIds([removedItem])] : [itemId];
+    const nextOutline = deleteOutlineItem(outlineData.outline, itemId);
+    if (!nextOutline.length) {
+      showToast('至少保留一个目录项', 'info');
+      return;
+    }
+    setDeleteTarget({
+      itemId,
+      title: removedItem?.title || '未命名目录项',
+      removedCount: removedIds.length,
+    });
+  };
+
+  const confirmRemoveItem = async () => {
+    if (!outlineData || !deleteTarget) {
+      return;
+    }
     try {
-      const removedItem = findOutlineItem(outlineData.outline, itemId);
-      const removedIds = removedItem ? [...collectOutlineIds([removedItem])] : [itemId];
-      const nextOutline = deleteOutlineItem(outlineData.outline, itemId);
+      const removedItem = findOutlineItem(outlineData.outline, deleteTarget.itemId);
+      const removedIds = removedItem ? [...collectOutlineIds([removedItem])] : [deleteTarget.itemId];
+      const nextOutline = deleteOutlineItem(outlineData.outline, deleteTarget.itemId);
       if (!nextOutline.length) {
         showToast('至少保留一个目录项', 'info');
         return;
@@ -858,6 +880,8 @@ function OutlineEditPage({
       showToast('目录项已删除', 'success');
     } catch (error) {
       showToast(error instanceof Error ? error.message : '删除目录项失败', 'error');
+    } finally {
+      setDeleteTarget(null);
     }
   };
 
@@ -1551,6 +1575,24 @@ function OutlineEditPage({
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
+
+      <AppDialog
+        open={Boolean(deleteTarget)}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        kicker="删除目录项"
+        title={`确认删除“${deleteTarget?.title || ''}”`}
+        description={
+          deleteTarget && deleteTarget.removedCount > 1
+            ? `该目录项共包含 ${deleteTarget.removedCount} 个节点，删除后将同时清空它们已生成的正文，且不可恢复。`
+            : '删除后将同时清空该目录项已生成的正文，且不可恢复。'
+        }
+        actions={(
+          <>
+            <button type="button" className="secondary-action" onClick={() => setDeleteTarget(null)}>取消</button>
+            <button type="button" className="danger-action" onClick={() => { void confirmRemoveItem(); }}>确认删除</button>
+          </>
+        )}
+      />
     </div>
   );
 }

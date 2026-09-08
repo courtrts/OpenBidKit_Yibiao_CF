@@ -29,6 +29,15 @@ export function requireAdmin(request, env) {
   return Boolean(token) && authorization === `Bearer ${token}`;
 }
 
+// handler 内部 catch 的对外 message 文案：仅显式带 statusCode 的业务错误
+// （createPluginError 一类"有意可读"的校验/配置提示）放行其 message；
+// D1/KV/AE 等内部异常（可能含 SQL 片段、表名、绑定名）一律回退固定文案，
+// 完整错误只写 Worker 日志。safe() 统一返回 'internal error'，此函数供
+// 自带 try/catch 的 handler 复用同一标准。
+export function internalErrorMessage(error, fallback) {
+  return Number(error?.statusCode) ? (error?.message || fallback) : fallback;
+}
+
 // 管理路由统一错误兜底：D1/KV/AE 异常时返回带 CORS 头的 JSON 500 并记录日志，
 // 而不是不透明裸 500（dashboard 无法读取错误内容，排障也没有线索）。
 // 鉴权（401）与参数校验（400）在 handler 内部先行处理，不受影响。

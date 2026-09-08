@@ -26,11 +26,13 @@ function normalizeBooleanValue(value, defaultValue = true) {
 function normalizeExpiresAt(value) {
   const text = normalizeText(value, 40);
   if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
-    const expiresAt = `${text}T23:59:59.999Z`;
-    if (new Date(expiresAt).getTime() <= Date.now()) {
+    // 纯日期按业务日（Asia/Shanghai）当日 23:59:59 解释，与系统其余时间语义一致；
+    // 原实现按 UTC 日末解释，实际有效期比管理员预期多约 8 小时。
+    const expiresAt = new Date(`${text}T23:59:59.999+08:00`);
+    if (Number.isNaN(expiresAt.getTime()) || expiresAt.getTime() <= Date.now()) {
       throw new Error('invalid expiresAt');
     }
-    return expiresAt;
+    return expiresAt.toISOString();
   }
   const date = new Date(text);
   if (Number.isNaN(date.getTime()) || date.getTime() <= Date.now()) {
@@ -148,6 +150,7 @@ export async function handleLicenseConfig(request, env, url) {
     try {
       return json({ code: 0, config: await saveLicenseConfig(env, body) }, { headers: { 'Cache-Control': 'no-store' } });
     } catch (error) {
+      console.error('[license] save config failed', error?.message || String(error));
       return json({ code: 400, message: error?.message || 'save failed' }, { status: 400 });
     }
   }

@@ -340,25 +340,17 @@ export async function recordTrackClient(env, event) {
   ]);
 }
 
-async function queryTodayActiveClients(env, projectName) {
-  const project = sqlString(projectName);
-  const sql = `
-    SELECT COUNT(DISTINCT blob7) AS activeClients
-    FROM ${DATASET}
-    WHERE blob1 = ${project}
-      AND blob2 IN ${allowedEventsSql()}
-      AND blob7 != ''
-      AND ${businessDateCondition(getBusinessToday())}
-  `;
-  const result = await queryAnalytics(env, sql);
-  return number(result.data?.[0]?.activeClients);
-}
-
 async function queryTodayDaily(env, projectName) {
   const project = sqlString(projectName);
+  // activeClients 保持原语义；activeClientsTrusted 等价于原 queryTodayActiveClients
+  // （多排除空 clientId），把原来同条件重复的两次 AE 扫描合并成一次。
+  // AE 不支持 CASE WHEN/nullIf 出现在聚合内，if() 分支必须同型，因此用 '' 占位，
+  // 并以 emptyClientEvents>0 在 JS 侧扣掉 '' 桶，保证与 WHERE blob7 != '' 完全等价。
   const sql = `
     SELECT
       COUNT(DISTINCT blob7) AS activeClients,
+      COUNT(DISTINCT if(blob7 != '', blob7, '')) AS activeClientsTrustedRaw,
+      SUM(if(blob7 = '', _sample_interval, 0)) AS emptyClientEvents,
       SUM(if(blob2 = 'app_open', _sample_interval, 0)) AS appOpen,
       SUM(if(blob2 = 'page_view', _sample_interval, 0)) AS pageView,
       SUM(_sample_interval) AS eventCount
@@ -369,9 +361,11 @@ async function queryTodayDaily(env, projectName) {
   `;
   const result = await queryAnalytics(env, sql);
   const row = result.data?.[0] || {};
+  const emptyClientEvents = number(row.emptyClientEvents);
   return {
     date: getBusinessToday(),
     activeClients: number(row.activeClients),
+    activeClientsTrusted: number(row.activeClientsTrustedRaw) - (emptyClientEvents > 0 ? 1 : 0),
     appOpen: number(row.appOpen),
     pageView: number(row.pageView),
     eventCount: number(row.eventCount),
@@ -385,7 +379,7 @@ export async function queryStatsOverview(env, projectName) {
   const last7Start = getBusinessDateDaysAgo(6);
   const last9Start = getBusinessDateDaysAgo(9);
 
-  const [totals, todayNew, last7New, dailyRows, todayActiveClients, todayDaily] = await Promise.all([
+  const [totals, todayNew, last7New, dailyRows, todayDaily] = await Promise.all([
     first(db, `
       SELECT
         total_clients,
@@ -415,7 +409,6 @@ export async function queryStatsOverview(env, projectName) {
       WHERE project_name = ? AND activity_date >= ? AND activity_date < ?
       ORDER BY activity_date DESC
     `, [projectName, last9Start, today]),
-    queryTodayActiveClients(env, projectName),
     queryTodayDaily(env, projectName),
   ]);
 
@@ -441,7 +434,7 @@ export async function queryStatsOverview(env, projectName) {
     totalGeneratedImages: number(totals?.total_generated_images),
     todayNewClients: number(todayNew?.count),
     last7NewClients: number(last7New?.count),
-    todayActiveClients,
+    todayActiveClients: todayDaily.activeClientsTrusted,
     lastRollupDate: totals?.last_rollup_date || '',
     daily,
   };
@@ -2731,14 +2724,40 @@ export async function rollupYesterdayForAllProjects(env) {
 }
 
 // 免费套餐适配：每天只有 1 个 cron，若昨日汇总中途被中断（CPU 上限/异常退出），
-// 次日不会再自动重跑旧的一天（次日处理新的“昨日”）。这里扫描最近 N 个业务日
+// 次日不会再自动重跑旧的一天（次日处理新的“昨日”）。这里扫描最近 7 个业务日
 // 的 stats_rollup_runs，把 status != 'success' 的项目交给 rollupStatsDay 补跑；
 // 各阶段/分块均有 success 标记（stats_rollup_stages），补跑不会重复累计。
-export async function catchUpIncompleteRollups(env, days = 3) {
+export async function catchUpIncompleteRollups(env, days = 7) {
   const db = requireStatsDb(env);
   const results = [];
   for (let back = days; back >= 1; back -= 1) {
     const activityDate = getBusinessDateDaysAgo(back);
+    // runs 行在 discovery 阶段的 AE 查询成功后才写入：discovery 失败（AE 抖动/限流）
+    // 会让当天零行，下面的"不完整"扫描永远看不到这一天 → 该业务日汇总永久缺失。
+    // 这里把当日零行视为"未开始"：重跑 discovery 再逐项目补跑（幂等标记防重复累计）。
+    const [rowCount] = await all(db, `
+      SELECT COUNT(*) AS count
+      FROM stats_rollup_runs
+      WHERE activity_date = ?
+    `, [activityDate]);
+    if (!rowCount?.count) {
+      let projectNames = [];
+      try {
+        const discoverResult = await runRollupStageForDate(env, 'discover', activityDate);
+        projectNames = uniqueProjectNames(discoverResult.projects.map((row) => row.projectName));
+      } catch (error) {
+        console.warn(`[analytics] catch-up discovery failed for ${activityDate}: ${error?.message || String(error)}`);
+      }
+      for (const projectName of projectNames) {
+        try {
+          const result = await rollupStatsDay(env, projectName, activityDate);
+          results.push({ activityDate, projectName, ...result });
+        } catch (error) {
+          console.warn(`[analytics] catch-up rollup failed: ${projectName}/${activityDate} ${error?.message || String(error)}`);
+        }
+      }
+      continue;
+    }
     const incomplete = await all(db, `
       SELECT project_name AS projectName
       FROM stats_rollup_runs

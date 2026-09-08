@@ -200,16 +200,32 @@ export async function readModelInfoCacheStatus(env) {
   }
 }
 
-// 读取自动同步生成的模型能力索引。
+// 索引解析结果的 isolate 级记忆化。目录同步后索引 JSON 可达数 MB，
+// 每次请求整体 JSON.parse 会吃掉免费套餐 10ms CPU 预算的大头（同步前索引为
+// null、成本为零，问题只出现在同步后的公开 /model-info 与管理端列表页）。
+// 键取 status 小对象里的 syncedAt|sourceBytes（一次小 KV 读即可判定）：
+// 键不变直接复用已解析对象；sync 先写索引再写 status，至多一个秒级窗口内
+// 读到旧解析结果，对目录型数据可接受。GET 抛错时不更新键，下次请求自动重试。
+let indexMemo = { key: '', value: null };
+
 export async function readModelInfoCacheIndex(env) {
   if (!env.NOTICE_STORE) return null;
-  const raw = await env.NOTICE_STORE.get(MODEL_INFO_CACHE_INDEX_KEY);
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return null;
+  const status = await readModelInfoCacheStatus(env);
+  const key = status ? `${status.syncedAt || ''}|${status.sourceBytes ?? ''}` : 'empty';
+  if (indexMemo.key === key) {
+    return indexMemo.value;
   }
+  const raw = await env.NOTICE_STORE.get(MODEL_INFO_CACHE_INDEX_KEY);
+  let parsed = null;
+  if (raw) {
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      parsed = null;
+    }
+  }
+  indexMemo = { key, value: parsed };
+  return parsed;
 }
 
 // 读取管理员人工覆盖记录；该数据不会被自动同步任务修改。

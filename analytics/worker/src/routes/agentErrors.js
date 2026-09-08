@@ -74,6 +74,7 @@ export async function handleAdminAgentErrorConfig(request, env, url) {
     try {
       return json({ code: 0, config: await saveAgentErrorConfig(env, body) }, { headers: { 'Cache-Control': 'no-store' } });
     } catch (error) {
+      console.error('[agent-errors] save config failed', error?.message || String(error));
       return json({ code: 400, message: error?.message || 'save failed' }, { status: 400 });
     }
   }

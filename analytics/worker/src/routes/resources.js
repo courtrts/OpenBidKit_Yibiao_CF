@@ -7,7 +7,7 @@ import {
   RESOURCE_TAGS_MAX_LENGTH,
   RESOURCE_TITLE_MAX_LENGTH,
 } from '../constants.js';
-import { corsHeaders, json, methodNotAllowed, requireAdmin, unauthorized } from '../http.js';
+import { corsHeaders, internalErrorMessage, json, methodNotAllowed, requireAdmin, unauthorized } from '../http.js';
 import { queryAnalytics } from '../services/analyticsQuery.js';
 import {
   buildResourceImageUrl,
@@ -38,7 +38,8 @@ export async function handlePublicResources(request, env, url) {
     return json({ code: 0, resources: resourcesWithStats }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     console.error('[analytics] public resources failed', error?.message || String(error));
-    return json({ code: 500, message: error?.message || 'resources query failed' }, { status: 500 });
+    // 公开端点：内部错误只给固定文案，细节留在日志
+    return json({ code: 500, message: 'resources query failed' }, { status: 500 });
   }
 }
 
@@ -220,7 +221,7 @@ async function handleAdminSaveResource(request, env, url) {
     return json({ code: 0, resource });
   } catch (error) {
     console.error('[analytics] save resource failed', error?.message || String(error));
-    return json({ code: 500, message: error?.message || 'resource save failed' }, { status: 500 });
+    return json({ code: 500, message: internalErrorMessage(error, 'resource save failed') }, { status: 500 });
   }
 }
 

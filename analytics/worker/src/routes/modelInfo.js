@@ -1,4 +1,4 @@
-import { json, methodNotAllowed, requireAdmin, unauthorized } from '../http.js';
+import { internalErrorMessage, json, methodNotAllowed, requireAdmin, unauthorized } from '../http.js';
 import {
   deleteModelInfoOverride,
   listAdminModelInfo,
@@ -84,7 +84,7 @@ export async function handleAdminModelInfoCache(request, env, url) {
       return json({ code: 0, status: result.status }, { headers: { 'Cache-Control': 'no-store' } });
     } catch (error) {
       console.error('[analytics] manual model info sync failed', error?.message || String(error));
-      return json({ code: 502, message: error?.message || 'model info sync failed' }, { status: 502 });
+      return json({ code: 502, message: internalErrorMessage(error, 'model info sync failed') }, { status: 502 });
     }
   }
   return methodNotAllowed();

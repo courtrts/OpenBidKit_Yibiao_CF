@@ -1,4 +1,4 @@
-import { corsHeaders, json, methodNotAllowed, requireAdmin, unauthorized } from '../http.js';
+import { corsHeaders, internalErrorMessage, json, methodNotAllowed, requireAdmin, unauthorized } from '../http.js';
 import {
   deletePlugin,
   incrementPluginDownload,
@@ -23,7 +23,8 @@ export async function handlePublicPlugins(request, env, url) {
     return json({ code: 0, plugins }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     console.error('[analytics] public plugins failed', error?.message || String(error));
-    return json({ code: 500, message: error?.message || 'plugins query failed' }, { status: 500 });
+    // 公开路由（无鉴权）：固定文案，内部错误细节只进日志
+    return json({ code: 500, message: 'plugins query failed' }, { status: 500 });
   }
 }
 
@@ -84,7 +85,7 @@ export async function handleAdminPluginSync(request, env) {
     }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     console.error('[analytics] admin sync plugins failed', error?.message || String(error));
-    return json({ code: 500, message: error?.message || 'plugins sync failed' }, { status: 500 });
+    return json({ code: 500, message: internalErrorMessage(error, 'plugins sync failed') }, { status: 500 });
   }
 }
 export async function handleAdminPlugins(request, env, url) {
@@ -117,7 +118,7 @@ async function handleAdminGetPlugins(env) {
     return json({ code: 0, plugins }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     console.error('[analytics] admin get plugins failed', error?.message || String(error));
-    return json({ code: 500, message: error?.message || 'plugins query failed' }, { status: 500 });
+    return json({ code: 500, message: internalErrorMessage(error, 'plugins query failed') }, { status: 500 });
   }
 }
 
@@ -135,7 +136,7 @@ async function handleAdminSavePlugin(request, env) {
   } catch (error) {
     console.error('[analytics] save plugin failed', error?.message || String(error));
     const status = Number(error?.statusCode) || 500;
-    return json({ code: status, message: error?.message || 'plugin save failed' }, { status });
+    return json({ code: status, message: internalErrorMessage(error, 'plugin save failed') }, { status });
   }
 }
 
@@ -153,6 +154,6 @@ async function handleAdminDeletePlugin(env, url) {
     return json({ code: 0, plugin: null });
   } catch (error) {
     console.error('[analytics] delete plugin failed', error?.message || String(error));
-    return json({ code: 500, message: error?.message || 'plugin delete failed' }, { status: 500 });
+    return json({ code: 500, message: internalErrorMessage(error, 'plugin delete failed') }, { status: 500 });
   }
 }

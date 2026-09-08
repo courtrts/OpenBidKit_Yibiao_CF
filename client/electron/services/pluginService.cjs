@@ -1,8 +1,10 @@
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const AdmZip = require('adm-zip');
 const { createPluginContext } = require('./pluginContext.cjs');
+const { assertAllowedUpdateUrl } = require('./updateService.cjs');
 
 const PLUGIN_MARKET_URL = 'https://toubiao.ztok.dpdns.org/plugins';
 const PLUGIN_DOWNLOAD_URL = `${PLUGIN_MARKET_URL}/download`;
@@ -307,42 +309,79 @@ class PluginService {
   }
 
   /**
-   * 下载插件
+   * 下载插件。
+   * 包地址来自插件市场接口（外部输入）：仅允许 https + 白名单 host，重定向同样校验，
+   * 60 秒空闲超时防止慢速/假死服务器挂死插件操作锁，并校验响应状态码（原实现会把 404 页面当 zip 落盘）。
    */
   async downloadPlugin(releaseUrl) {
+    let initialUrl;
+    try {
+      initialUrl = assertAllowedUpdateUrl(releaseUrl, '插件包');
+    } catch (error) {
+      throw error;
+    }
+
     const tempDir = path.join(this.app.getPath('temp'), 'yibiao-plugins');
     fs.mkdirSync(tempDir, { recursive: true });
-    
-    const fileName = path.basename(new URL(releaseUrl).pathname);
-    const zipPath = path.join(tempDir, fileName);
-    
+
+    // 临时文件名加随机前缀，避免两个同名插件包互相覆盖
+    const baseName = path.basename(initialUrl.pathname) || 'plugin.zip';
+    const zipPath = path.join(tempDir, `${crypto.randomUUID()}-${baseName}`);
+
     return new Promise((resolve, reject) => {
-      const file = fs.createWriteStream(zipPath);
-      
-      https.get(releaseUrl, (response) => {
-        if (response.statusCode === 302 || response.statusCode === 301) {
-          // 处理重定向
-          https.get(response.headers.location, (redirectResponse) => {
-            redirectResponse.pipe(file);
-            file.on('finish', () => {
-              file.close();
-              resolve(zipPath);
-            });
-          }).on('error', (err) => {
-            fs.unlinkSync(zipPath);
-            reject(err);
-          });
-        } else {
+      let settled = false;
+      let request = null;
+      const fail = (error) => {
+        if (settled) return;
+        settled = true;
+        if (request) {
+          try { request.destroy(); } catch {}
+        }
+        try { fs.rmSync(zipPath, { force: true }); } catch {}
+        reject(error);
+      };
+
+      const follow = (rawUrl, redirectCount) => {
+        let parsed;
+        try {
+          parsed = assertAllowedUpdateUrl(rawUrl, '插件包下载');
+        } catch (error) {
+          fail(error);
+          return;
+        }
+        request = https.get(parsed, { headers: { 'User-Agent': 'yibiao-client' } }, (response) => {
+          if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+            response.resume();
+            if (redirectCount >= 3) {
+              fail(new Error('插件包下载重定向次数过多'));
+              return;
+            }
+            follow(new URL(response.headers.location, parsed).toString(), redirectCount + 1);
+            return;
+          }
+          if (response.statusCode < 200 || response.statusCode >= 300) {
+            response.resume();
+            fail(new Error(`插件包下载失败：${response.statusCode}`));
+            return;
+          }
+          const file = fs.createWriteStream(zipPath);
           response.pipe(file);
+          response.on('error', fail);
+          file.on('error', fail);
           file.on('finish', () => {
             file.close();
+            if (settled) return;
+            settled = true;
             resolve(zipPath);
           });
-        }
-      }).on('error', (err) => {
-        fs.unlinkSync(zipPath);
-        reject(err);
-      });
+        });
+        request.on('error', fail);
+        request.setTimeout(60000, () => {
+          fail(new Error('插件包下载超时'));
+        });
+      };
+
+      follow(initialUrl.toString(), 0);
     });
   }
 

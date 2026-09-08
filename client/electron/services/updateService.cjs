@@ -1,5 +1,5 @@
+const crypto = require('node:crypto');
 const fs = require('node:fs');
-const http = require('node:http');
 const https = require('node:https');
 const path = require('node:path');
 
@@ -16,6 +16,32 @@ const CLOUDFLARE_LATEST_JSON_URL = `${CLOUDFLARE_RELEASE_BASE_URL}/latest.json`;
 const ATOMGIT_REPOSITORY_URL = 'https://atomgit.com/FB208/OpenBidKit_Yibiao';
 const ATOMGIT_RELEASE_API_BASE_URL = 'https://api.atomgit.com/api/v5/repos/FB208/OpenBidKit_Yibiao/releases';
 const ATOMGIT_LATEST_RELEASE_API = `${ATOMGIT_RELEASE_API_BASE_URL}/latest`;
+
+// 更新包允许出现的 host（含重定向目标）。按各渠道真实重定向链实测固定：
+// GitHub 资产 github.com → release-assets.githubusercontent.com；
+// AtomGit 附件 api.atomgit.com → file-cdn.gitcode.com（签名 CDN）；
+// Cloudflare 渠道为 R2 公共桶域名。禁止 http: 与白名单外的重定向，防止劫持/篡改投递安装包。
+const ALLOWED_UPDATE_HOSTS = new Set([
+  'github.com',
+  'api.github.com',
+  'release-assets.githubusercontent.com',
+  'objects.githubusercontent.com',
+  'atomgit.com',
+  'api.atomgit.com',
+  'file-cdn.gitcode.com',
+  'pub-e7a765184e924c72a1dbe429d9bf181c.r2.dev',
+]);
+
+function assertAllowedUpdateUrl(rawUrl, label) {
+  const parsed = new URL(rawUrl);
+  if (parsed.protocol !== 'https:') {
+    throw new Error(`${label}仅支持 https 地址`);
+  }
+  if (!ALLOWED_UPDATE_HOSTS.has(parsed.hostname.toLowerCase())) {
+    throw new Error(`${label}地址不在允许的更新源范围内`);
+  }
+  return parsed;
+}
 
 let autoUpdaterInstance = null;
 let downloadedUpdateVersion = '';
@@ -104,10 +130,25 @@ function getUpdateChannel(configStore) {
 
 function requestJson(url, label, headers = {}) {
   return new Promise((resolve, reject) => {
-    const request = https.get(url, { headers: { 'User-Agent': 'yibiao-client', ...headers } }, (response) => {
+    let parsed;
+    try {
+      parsed = assertAllowedUpdateUrl(url, `${label}请求`);
+    } catch (error) {
+      reject(error);
+      return;
+    }
+
+    const request = https.get(parsed, { headers: { 'User-Agent': 'yibiao-client', ...headers } }, (response) => {
       if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
         response.resume();
-        requestJson(new URL(response.headers.location, url).toString(), label, headers).then(resolve, reject);
+        let nextParsed;
+        try {
+          nextParsed = assertAllowedUpdateUrl(new URL(response.headers.location, parsed).toString(), `${label}请求`);
+        } catch (error) {
+          reject(error);
+          return;
+        }
+        requestJson(nextParsed.toString(), label, headers).then(resolve, reject);
         return;
       }
 
@@ -342,7 +383,6 @@ function isDownloadedFileReady(filePath, expectedSize = 0) {
 
 function requestModuleForUrl(url) {
   if (url.protocol === 'https:') return https;
-  if (url.protocol === 'http:') return http;
   throw new Error(`不支持的下载地址协议：${url.protocol}`);
 }
 
@@ -351,9 +391,9 @@ function downloadFile(url, destinationPath, options = {}, redirectCount = 0) {
   return new Promise((resolve, reject) => {
     let parsedUrl;
     try {
-      parsedUrl = new URL(url);
-    } catch {
-      reject(new Error('更新包下载地址无效'));
+      parsedUrl = assertAllowedUpdateUrl(url, '更新包下载');
+    } catch (error) {
+      reject(error);
       return;
     }
 
@@ -377,7 +417,14 @@ function downloadFile(url, destinationPath, options = {}, redirectCount = 0) {
             fail(new Error('更新包下载重定向次数过多'));
             return;
           }
-          downloadFile(new URL(response.headers.location, parsedUrl).toString(), destinationPath, options, redirectCount + 1)
+          let nextUrl;
+          try {
+            nextUrl = assertAllowedUpdateUrl(new URL(response.headers.location, parsedUrl).toString(), '更新包下载重定向');
+          } catch (error) {
+            fail(error);
+            return;
+          }
+          downloadFile(nextUrl.toString(), destinationPath, options, redirectCount + 1)
             .then(resolve, reject);
           return;
         }
@@ -437,6 +484,25 @@ function downloadFile(url, destinationPath, options = {}, redirectCount = 0) {
   });
 }
 
+// 用发布接口返回的 digest（形如 "sha256:xxx"）流式校验安装包完整性；渠道未提供 digest 时不阻断。
+function verifyDownloadedDigest(filePath, expectedDigest) {
+  return new Promise((resolve) => {
+    const hex = String(expectedDigest || '').trim().replace(/^sha256:/i, '').toLowerCase();
+    if (!/^[a-f0-9]{64}$/.test(hex)) {
+      resolve(true);
+      return;
+    }
+    const hash = crypto.createHash('sha256');
+    const stream = fs.createReadStream(filePath);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('error', () => resolve(false));
+    stream.on('end', () => {
+      hash.end();
+      resolve(hash.digest('hex') === hex);
+    });
+  });
+}
+
 // 下载可由系统直接启动的 Windows 或 macOS 更新安装包。
 async function runManualInstallerUpdateCheck(options, release, channel) {
   const { app, mainWindow, onProgress, onDownloaded, onError } = options;
@@ -452,7 +518,15 @@ async function runManualInstallerUpdateCheck(options, release, channel) {
   const expectedSize = Number(installerFile.size || 0);
 
   try {
-    if (isDownloadedFileReady(destinationPath, expectedSize)) {
+    // 已存在同版本安装包时先用 digest 复核，防篡改/防损坏残留（失败则删除重下）。
+    let ready = isDownloadedFileReady(destinationPath, expectedSize);
+    if (ready && installerFile.digest) {
+      ready = await verifyDownloadedDigest(destinationPath, installerFile.digest);
+      if (!ready) {
+        try { fs.rmSync(destinationPath, { force: true }); } catch {}
+      }
+    }
+    if (ready) {
       downloadedUpdateVersion = release.version;
       downloadedUpdateChannel = channel;
       downloadedUpdateFilePath = destinationPath;
@@ -468,6 +542,11 @@ async function runManualInstallerUpdateCheck(options, release, channel) {
         onProgress?.(percent);
       },
     });
+    // GitHub 渠道提供 sha256 digest：下载完成后比对，不符即删除并报完整性失败。
+    if (installerFile.digest && !(await verifyDownloadedDigest(destinationPath, installerFile.digest))) {
+      try { fs.rmSync(destinationPath, { force: true }); } catch {}
+      throw new Error('更新包完整性校验失败，请重新检查更新');
+    }
 
     downloadedUpdateVersion = release.version;
     downloadedUpdateChannel = channel;
@@ -668,4 +747,6 @@ module.exports = {
   quitAndInstall,
   getLatestVersion,
   getUpdateDownloadUrl,
+  // 供插件下载等其它下载链路复用：https + host 白名单校验
+  assertAllowedUpdateUrl,
 };

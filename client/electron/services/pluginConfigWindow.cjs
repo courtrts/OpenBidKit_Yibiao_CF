@@ -53,8 +53,17 @@ function openPluginConfigWindow(app, pluginId, pluginService) {
       throw new Error('插件没有配置界面');
     }
 
-    const configUI = manifest.configUI || './config-ui/index.html';
-    const configPath = path.join(pluginDir, configUI);
+    // configUI 来自第三方 manifest（外部输入）：用 path.resolve 归一化后校验必须落在本插件目录内。
+    // path.join 无法阻止绝对路径或 '..' 跳出 pluginDir，越界的初始 loadFile 会加载本机任意 HTML。
+    const rawConfigUI = String(manifest.configUI || './config-ui/index.html');
+    if (rawConfigUI.includes('\0')) {
+      throw new Error('插件配置界面路径非法');
+    }
+    const resolvedPluginDir = path.resolve(pluginDir);
+    const configPath = path.resolve(resolvedPluginDir, rawConfigUI);
+    if (configPath === resolvedPluginDir || !configPath.startsWith(`${resolvedPluginDir}${path.sep}`)) {
+      throw new Error('插件配置界面路径超出插件目录');
+    }
 
     if (!fs.existsSync(configPath)) {
       throw new Error('配置界面文件不存在');

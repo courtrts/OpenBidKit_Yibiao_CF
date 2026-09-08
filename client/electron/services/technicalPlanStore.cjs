@@ -731,13 +731,43 @@ function createTechnicalPlanStore({ app, db, fileService, agentService, taskLogS
     return path.isAbsolute(value) ? value : path.join(path.dirname(path.dirname(tenderMarkdownPath)), value);
   }
 
-  function readTenderMarkdown() {
-    const meta = readMetaRow();
-    const filePath = resolveMarkdownPath(meta.tender_markdown_path || tenderMarkdownRelativePath);
-    if (!meta.tender_markdown_path || !fs.existsSync(filePath)) {
+  // 招标 Markdown 进程内缓存：招标文件常达数 MB，而 AI 任务链（分析/抽取/生成/事实）
+  // 每个任务都会全量重读同一文件。以 mtimeMs+size 为键，文件被外部修改会自动 miss 重读；
+  // writeMarkdownFile 完成 rename 后立即失效，保证写后读到的永远是新内容。
+  const markdownReadCache = new Map();
+
+  function readMarkdownCached(filePath) {
+    let stat;
+    try {
+      stat = fs.statSync(filePath);
+    } catch {
       return '';
     }
-    return fs.readFileSync(filePath, 'utf-8');
+    if (!stat.isFile()) return '';
+    const key = `${stat.mtimeMs}:${stat.size}`;
+    const cached = markdownReadCache.get(filePath);
+    if (cached && cached.key === key) {
+      return cached.text;
+    }
+    if (markdownReadCache.size > 16) {
+      markdownReadCache.clear();
+    }
+    const text = fs.readFileSync(filePath, 'utf-8');
+    markdownReadCache.set(filePath, { key, text });
+    return text;
+  }
+
+  function invalidateMarkdownCache(targetPath) {
+    markdownReadCache.delete(targetPath);
+  }
+
+  function readTenderMarkdown() {
+    const meta = readMetaRow();
+    if (!meta.tender_markdown_path) {
+      return '';
+    }
+    const filePath = resolveMarkdownPath(meta.tender_markdown_path || tenderMarkdownRelativePath);
+    return readMarkdownCached(filePath);
   }
 
   function loadTenderSourceFiles(meta = readMetaRow()) {
@@ -774,8 +804,7 @@ function createTechnicalPlanStore({ app, db, fileService, agentService, taskLogS
     const target = loadTenderSourceFiles().find((file) => file.id === String(sourceId || ''));
     if (!target) return '';
     const filePath = resolveMarkdownPath(target.markdownPath);
-    if (!fs.existsSync(filePath)) return '';
-    return fs.readFileSync(filePath, 'utf-8');
+    return readMarkdownCached(filePath);
   }
 
   function readOriginalTenderMarkdown() {
@@ -787,7 +816,7 @@ function createTechnicalPlanStore({ app, db, fileService, agentService, taskLogS
       ? resolveMarkdownPath(meta.tender_original_markdown_path)
       : null;
     if (originalPath && fs.existsSync(originalPath)) {
-      return fs.readFileSync(originalPath, 'utf-8');
+      return readMarkdownCached(originalPath);
     }
     throw new Error('原始招标文件缺失，请重新上传招标文件');
   }
@@ -803,6 +832,7 @@ function createTechnicalPlanStore({ app, db, fileService, agentService, taskLogS
       if (fs.existsSync(tempPath)) fs.rmSync(tempPath, { force: true });
       throw error;
     }
+    invalidateMarkdownCache(targetPath);
   }
 
   function checkBidSections() {

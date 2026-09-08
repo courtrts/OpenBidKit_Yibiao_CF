@@ -1,7 +1,15 @@
 const { ipcMain, shell } = require('electron');
 
+// 主进程级单飞保护：渲染层的防连点只存在于单个页面组件内，切页重进即失效；
+// 导出（含 Mermaid 转图）可长达分钟级，并发导出会叠加保存对话框并重复计数。
+let exportInFlight = false;
+
 function registerExportIpc({ exportService, donationService }) {
   ipcMain.handle('export:word', async (event, payload = {}) => {
+    if (exportInFlight) {
+      return { success: false, message: '已有导出任务正在进行，请稍候再试' };
+    }
+    exportInFlight = true;
     const requestId = payload.requestId || payload.request_id;
     const donationPrompt = donationService.recordWordExport({ deferPrompt: true });
     const sendProgress = (progress) => {
@@ -18,6 +26,7 @@ function registerExportIpc({ exportService, donationService }) {
       });
       throw error;
     } finally {
+      exportInFlight = false;
       donationService.showPrompt(donationPrompt);
     }
   });

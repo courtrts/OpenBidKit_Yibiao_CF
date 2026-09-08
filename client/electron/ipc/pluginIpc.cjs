@@ -4,6 +4,24 @@ const { dialog } = require('electron');
 const pluginService = require('../services/pluginService.cjs');
 const { openPluginConfigWindow } = require('../services/pluginConfigWindow.cjs');
 
+// 与 pluginService 安装校验（manifest.id）同一套格式；插件配置窗口加载的是
+// 第三方插件 HTML，其 IPC 调用属于外部输入层，pluginId 必须先过格式与目录包含检查，
+// 防止 `..` 路径拼接读写 plugin-configs 之外的任意 .json。
+const PLUGIN_CONFIG_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
+
+function resolvePluginConfigPath(app, pluginId) {
+  const id = String(pluginId || '');
+  if (!PLUGIN_CONFIG_ID_PATTERN.test(id)) {
+    return null;
+  }
+  const rootDir = path.resolve(path.join(app.getPath('userData'), 'plugin-configs'));
+  const configPath = path.resolve(rootDir, `${id}.json`);
+  if (configPath !== rootDir && !configPath.startsWith(`${rootDir}${path.sep}`)) {
+    return null;
+  }
+  return configPath;
+}
+
 /**
  * 注册插件相关 IPC
  */
@@ -174,8 +192,12 @@ function registerPluginIpc(ipcMain, app, services) {
   // 插件配置读取（供配置窗口使用）
   ipcMain.handle('plugin-config:get', async (event, pluginId, key) => {
     try {
-      const configPath = path.join(app.getPath('userData'), 'plugin-configs', `${pluginId}.json`);
-      
+      const configPath = resolvePluginConfigPath(app, pluginId);
+      if (!configPath) {
+        console.warn('[plugin-ipc] 非法的插件配置读取请求:', pluginId);
+        return undefined;
+      }
+
       if (!fs.existsSync(configPath)) {
         return undefined;
       }
@@ -192,8 +214,12 @@ function registerPluginIpc(ipcMain, app, services) {
   // 插件配置写入（供配置窗口使用）
   ipcMain.handle('plugin-config:set', async (event, pluginId, key, value) => {
     try {
-      const configPath = path.join(app.getPath('userData'), 'plugin-configs', `${pluginId}.json`);
-      
+      const configPath = resolvePluginConfigPath(app, pluginId);
+      if (!configPath) {
+        console.warn('[plugin-ipc] 非法的插件配置写入请求:', pluginId);
+        return false;
+      }
+
       let config = {};
       if (fs.existsSync(configPath)) {
         const data = fs.readFileSync(configPath, 'utf-8');

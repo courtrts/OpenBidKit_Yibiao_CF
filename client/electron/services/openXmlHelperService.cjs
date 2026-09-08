@@ -95,10 +95,36 @@ function createOpenXmlHelperService({ app, configStore } = {}) {
     waiter.resolve({ ok: signal.ok === true });
   }
 
+  /** 清理 24 小时前的历史任务目录，避免 job 目录在磁盘上永久累积。
+   * 按目录 mtime 判断：活动任务目录刚写入过，不会被误删。 */
+  function cleanupStaleJobDirs() {
+    const STALE_JOB_DIR_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+    try {
+      const jobsDir = getOpenXmlJobsDir(app);
+      if (!fs.existsSync(jobsDir)) return;
+      const now = Date.now();
+      for (const entry of fs.readdirSync(jobsDir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        const jobDir = path.join(jobsDir, entry.name);
+        try {
+          const stat = fs.statSync(jobDir);
+          if (now - stat.mtimeMs > STALE_JOB_DIR_MAX_AGE_MS) {
+            fs.rmSync(jobDir, { recursive: true, force: true });
+          }
+        } catch {
+          // 单个目录读取失败时跳过，不阻塞助手启动
+        }
+      }
+    } catch (error) {
+      console.warn('[openxml] 清理过期任务目录失败:', error?.message || String(error));
+    }
+  }
+
   /** 拉起已编译或已打包的助手进程。 */
   function spawnHelper() {
     const workspace = getWorkspaceDir(app);
     fs.mkdirSync(getOpenXmlJobsDir(app), { recursive: true });
+    cleanupStaleJobDirs();
 
     let command;
     let args;

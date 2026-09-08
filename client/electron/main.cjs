@@ -1,10 +1,11 @@
-const { app, BrowserWindow, nativeTheme, shell, protocol, net } = require('electron');
+const { app, BrowserWindow, dialog, nativeTheme, shell, protocol, net } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { registerIpcHandlers } = require('./ipc/index.cjs');
+const { createConfigStore } = require('./services/configStore.cjs');
 const { setupAutoUpdate, checkAndDownloadUpdate, triggerUpdateDownload, quitAndInstall, getLatestVersion, getUpdateDownloadUrl } = require('./services/updateService.cjs');
-const { getConfigFilePath, getGeneratedImagesDir, getGpuStartupProbePath, getImportedImagesDir } = require('./utils/paths.cjs');
+const { getConfigFilePath, getGeneratedImagesDir, getGpuStartupProbePath, getImportedImagesDir, getDeveloperLogsDir } = require('./utils/paths.cjs');
 
 const rendererUrl = process.env.ELECTRON_RENDERER_URL;
 const iconPath = path.join(__dirname, '../assets/icon.ico');
@@ -19,6 +20,54 @@ let developerAgentMonitorWindow = null;
 let services = null;
 let closeBeforeQuitStarted = false;
 let quitAfterClose = false;
+
+// 单实例锁：userData（配置、SQLite、工作区）只允许一个进程访问，
+// 重复启动时聚焦已有主窗口而不是再开一个实例并发写同一份数据。
+// 拿不到锁的进程立即退出，避免后续顶层初始化（GPU 状态机写配置等）产生副作用。
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+  process.exit(0);
+} else {
+  app.on('second-instance', () => {
+    const window = BrowserWindow.getAllWindows()[0];
+    if (!window) return;
+    if (window.isMinimized()) window.restore();
+    window.focus();
+  });
+}
+
+// 主进程崩溃兜底：未捕获的 rejection 不终止进程（后台任务/服务状态尽量保活），
+// 两者都落盘到 userData/logs/crash/crash.log 便于排查；
+// 未捕获异常额外弹窗提示用户保存进度（不强制退出，避免直接丢失内存中的工作）。
+function appendCrashLog(kind, error) {
+  try {
+    const logDir = getDeveloperLogsDir(app, 'crash');
+    fs.mkdirSync(logDir, { recursive: true });
+    const detail = error instanceof Error
+      ? `${error.name}: ${error.message}\n${error.stack || ''}`
+      : String(error);
+    fs.appendFileSync(
+      path.join(logDir, 'crash.log'),
+      `\n===== ${kind} @ ${new Date().toISOString()} =====\n${detail}\n`,
+      'utf-8',
+    );
+  } catch (logError) {
+    console.error('[electron] 写入崩溃日志失败', logError?.message || String(logError));
+  }
+}
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[electron] 未处理的 Promise rejection', reason);
+  appendCrashLog('unhandledRejection', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('[electron] 未捕获的异常', error);
+  appendCrashLog('uncaughtException', error);
+  if (app.isReady()) {
+    dialog.showErrorBox('易标投标工具箱遇到意外错误', '程序遇到了未捕获的异常，部分功能可能不可用。建议先保存工作，然后重启程序。详情已记录到崩溃日志。');
+  }
+});
 
 // 应用正常启动后静默检查公网出口 IP，仅明确命中封禁列表时结束进程。
 async function checkBlockedIpAfterStartup() {
@@ -423,6 +472,17 @@ function openDeveloperTokenStatsWindow() {
 
   developerTokenStatsWindow = tokenStatsWindow;
   tokenStatsWindow.setMenuBarVisibility(false);
+  tokenStatsWindow.webContents.setWindowOpenHandler(({ url }) => {
+    void openExternalUrl(url);
+    return { action: 'deny' };
+  });
+  tokenStatsWindow.webContents.on('will-navigate', (event, url) => {
+    if (isAllowedAppNavigation(url)) {
+      return;
+    }
+    event.preventDefault();
+    void openExternalUrl(url);
+  });
   tokenStatsWindow.on('closed', () => {
     if (developerTokenStatsWindow === tokenStatsWindow) {
       developerTokenStatsWindow = null;
@@ -470,6 +530,17 @@ function openDeveloperAgentMonitorWindow() {
 
   developerAgentMonitorWindow = monitorWindow;
   monitorWindow.setMenuBarVisibility(false);
+  monitorWindow.webContents.setWindowOpenHandler(({ url }) => {
+    void openExternalUrl(url);
+    return { action: 'deny' };
+  });
+  monitorWindow.webContents.on('will-navigate', (event, url) => {
+    if (isAllowedAppNavigation(url)) {
+      return;
+    }
+    event.preventDefault();
+    void openExternalUrl(url);
+  });
   monitorWindow.on('closed', () => {
     if (developerAgentMonitorWindow === monitorWindow) {
       developerAgentMonitorWindow = null;
@@ -482,7 +553,17 @@ function openDeveloperAgentMonitorWindow() {
 }
 
 app.whenReady().then(() => {
-  nativeTheme.themeSource = 'light';
+  // 深色模式：启动时按用户配置同步原生标题栏/系统控件配色。
+  // 这里独立创建一个只读用途的 configStore 实例（ipc 层另有单实例负责读写）：
+  // 本实例只读不写，不参与配置文件的合并保存，无缓存一致性问题。
+  try {
+    const startupConfigStore = createConfigStore(app);
+    const themeMode = startupConfigStore.load().theme_mode;
+    nativeTheme.themeSource = themeMode === 'dark' || themeMode === 'system' ? themeMode : 'light';
+  } catch (error) {
+    console.warn('[theme] 读取主题配置失败，回退浅色模式', error?.message || String(error));
+    nativeTheme.themeSource = 'light';
+  }
   registerAssetProtocol();
   const mainWindow = createMainWindow();
   scheduleGpuStartupProbeClear(mainWindow);

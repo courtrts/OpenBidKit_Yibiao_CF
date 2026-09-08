@@ -276,6 +276,7 @@ const defaultConfig = {
   update_channel: 'atomgit',
   gpu_hardware_acceleration_enabled: true,
   gpu_hardware_acceleration_configured: true,
+  theme_mode: 'light',
   export_format: defaultExportFormat,
   agent_mode_scenarios: defaultAgentModeScenarios,
   agent_auto_answer_enabled: DEFAULT_AGENT_AUTO_ANSWER_ENABLED,
@@ -746,6 +747,7 @@ function normalizeConfig(config) {
     gpu_hardware_acceleration_enabled: gpuHardwareAccelerationEnabled,
     gpu_hardware_acceleration_configured: gpuHardwareAccelerationConfigured === false ? true : gpuHardwareAccelerationConfigured,
     export_format: normalizeExportFormat(source.export_format),
+    theme_mode: source.theme_mode === 'dark' || source.theme_mode === 'system' ? source.theme_mode : 'light',
     agent_mode_scenarios: normalizeAgentModeScenarios(source.agent_mode_scenarios),
     agent_auto_answer_enabled: source.agent_auto_answer_enabled === undefined
       ? defaultConfig.agent_auto_answer_enabled
@@ -763,6 +765,9 @@ function normalizeConfig(config) {
 
 function createConfigStore(app) {
   const configFile = getConfigFilePath(app);
+  // 进程内缓存（配置文件的唯一写者是本应用，save() 同步更新缓存）：
+  // AI 热路径每次请求会多次 load()，避免每次都全文件读盘 + parse + normalize。
+  let cachedConfig = null;
 
   function persist(config) {
     let tempFile = '';
@@ -797,10 +802,16 @@ function createConfigStore(app) {
     },
 
     load() {
+      if (cachedConfig) {
+        // 返回副本：保持"调用方可修改返回值"的既有语义，同时缓存本体不被污染
+        return structuredClone(cachedConfig);
+      }
+
       if (!fs.existsSync(configFile)) {
         const config = withAnalyticsIdentity(normalizeConfig());
         persist(config);
-        return config;
+        cachedConfig = config;
+        return structuredClone(config);
       }
 
       try {
@@ -811,7 +822,8 @@ function createConfigStore(app) {
         if (JSON.stringify(parsedConfig) !== JSON.stringify(nextConfig)) {
           persist(nextConfig);
         }
-        return nextConfig;
+        cachedConfig = nextConfig;
+        return structuredClone(nextConfig);
       } catch (error) {
         throw new Error(`配置文件读取失败：${error.message}`);
       }
@@ -819,9 +831,11 @@ function createConfigStore(app) {
 
     save(config) {
       try {
-        const currentConfig = fs.existsSync(configFile)
-          ? normalizeConfig(JSON.parse(fs.readFileSync(configFile, 'utf-8')))
-          : normalizeConfig();
+        const currentConfig = cachedConfig
+          ? structuredClone(cachedConfig)
+          : fs.existsSync(configFile)
+            ? normalizeConfig(JSON.parse(fs.readFileSync(configFile, 'utf-8')))
+            : normalizeConfig();
         const nextConfig = withAnalyticsIdentity(normalizeConfig({
           ...currentConfig,
           ...config,
@@ -841,6 +855,7 @@ function createConfigStore(app) {
           analytics_created_at: config?.analytics_created_at || currentConfig.analytics_created_at,
         }));
         persist(nextConfig);
+        cachedConfig = nextConfig;
         return { success: true, message: '配置已保存', config_path: configFile };
       } catch (error) {
         throw new Error(`配置文件保存失败：${error.message}`);

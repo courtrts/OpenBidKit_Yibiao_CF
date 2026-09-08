@@ -86,9 +86,16 @@ function AppRouter({ activeSection, developerMode, onDeveloperModeChange, onSect
     case 'developer-agent-test':
       return <AgentTestPage />;
     case 'settings':
-      return <SettingsPage onDeveloperModeChange={onDeveloperModeChange} />;
+      return <SettingsPage onDeveloperModeChange={onDeveloperModeChange} registerLeaveGuard={registerLeaveGuard} />;
     default:
-      return null;
+      // 未知/未上线板块统一空态兜底，避免主区域整块白屏
+      return (
+        <section className="empty-panel compact-placeholder">
+          <span className="section-kicker">COMING SOON</span>
+          <h3>该板块暂未开放</h3>
+          <p>此功能正在建设中，请从左侧菜单选择其他功能。</p>
+        </section>
+      );
   }
 }
 

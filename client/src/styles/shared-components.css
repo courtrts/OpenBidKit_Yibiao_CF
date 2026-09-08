@@ -658,3 +658,13 @@
 .tooltip-arrow {
   fill: #172033;
 }
+
+/* [dark] 深色主题：工具条/空态/二级菜单面板去白底 */
+[data-theme='dark'] .floating-toolbar,
+[data-theme='dark'] .empty-panel,
+[data-theme='dark'] .secondary-menu-list-panel,
+[data-theme='dark'] .yb-empty-state {
+  background: var(--yb-surface);
+  border-color: var(--yb-border-soft);
+  color: var(--yb-text-soft);
+}

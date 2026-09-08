@@ -223,3 +223,16 @@
   opacity: 0.52;
   cursor: not-allowed;
 }
+
+/* [dark] 深色主题：上传板/文件条去白底 */
+[data-theme='dark'] .upload-board,
+[data-theme='dark'] .upload-file-pill {
+  background: var(--yb-surface);
+  border-color: var(--yb-border-soft);
+  color: var(--yb-text-soft);
+}
+
+[data-theme='dark'] .upload-label span {
+  background: var(--yb-bg);
+  color: var(--yb-text-soft);
+}

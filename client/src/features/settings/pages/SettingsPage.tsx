@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { trackConfigUsage } from '../../../shared/analytics/analytics';
-import { AppSwitch, DetailHelpLink, FloatingToolbar, InlineSpinner, InputWithAction, OfflineLicenseActivationDialog, useAutoAnswer, useToast } from '../../../shared/ui';
+import { AppDialog, AppSwitch, DetailHelpLink, FloatingToolbar, InlineSpinner, InputWithAction, OfflineLicenseActivationDialog, useAutoAnswer, useToast } from '../../../shared/ui';
 import { showUpdateReadyToast } from '../../../shared/updateToast';
 import { applyThemeMode, isThemeMode, type ThemeMode } from '../../../app/theme';
 import type { FloatingToolbarGroup } from '../../../shared/ui';
@@ -616,9 +616,10 @@ const initialState: SettingsPageState = {
 
 interface SettingsPageProps {
   onDeveloperModeChange?: (developerMode: boolean) => void;
+  registerLeaveGuard?: (guard: ((nextSection?: string) => Promise<boolean>) | null) => void;
 }
 
-function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
+function SettingsPage({ onDeveloperModeChange, registerLeaveGuard }: SettingsPageProps) {
   const [state, setState] = useState<SettingsPageState>(initialState);
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
   const [savedConfig, setSavedConfig] = useState<ClientConfig | null>(null);
@@ -1488,6 +1489,15 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
     }
   };
 
+  // 未保存设置在切换板块时不再静默丢失：离开守卫弹三选（保存/不保存/取消）
+  const [leaveConfirmResolver, setLeaveConfirmResolver] = useState<((allow: boolean) => void) | null>(null);
+
+  const confirmLeaveWithSave = async () => {
+    await saveActiveTabConfig();
+    leaveConfirmResolver?.(true);
+    setLeaveConfirmResolver(null);
+  };
+
   const saveActiveTabConfig = async () => {
     if (activeTab === 'general') {
       const nextConfig = createClientConfig();
@@ -1548,6 +1558,16 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
 
   const canSaveActiveTab = activeTab === 'general' || activeTab === 'text-model' || activeTab === 'image-model' || activeTab === 'components' || activeTab === 'agent';
   const activeTabDirty = isActiveTabDirty();
+
+  // 离开守卫：有未保存修改时拦截切换，由弹窗决定保存/丢弃/取消
+  useEffect(() => {
+    registerLeaveGuard?.(async () => {
+      if (!activeTabDirty) return true;
+      return new Promise<boolean>((resolve) => setLeaveConfirmResolver(() => resolve));
+    });
+    return () => registerLeaveGuard?.(null);
+  }, [activeTabDirty, registerLeaveGuard]);
+
   const currentTextProviderDefault = textProviderDefaults[state.textModel.provider];
   const imageModelStatus: ImageModelStatus = state.imageModel.status || 'untested';
   const currentImageStatus = imageStatusMeta[imageModelStatus];
@@ -2519,6 +2539,25 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
         open={offlineLicenseDialogOpen}
         onOpenChange={setOfflineLicenseDialogOpen}
         onActivated={setLicenseStatus}
+      />
+      <AppDialog
+        open={Boolean(leaveConfirmResolver)}
+        onOpenChange={(open) => {
+          if (!open) {
+            leaveConfirmResolver?.(false);
+            setLeaveConfirmResolver(null);
+          }
+        }}
+        kicker="未保存的设置"
+        title="当前设置还没有保存"
+        description="离开将丢弃未保存的修改。也可以先保存再离开。"
+        actions={(
+          <>
+            <button type="button" className="secondary-action" onClick={() => { leaveConfirmResolver?.(false); setLeaveConfirmResolver(null); }}>继续编辑</button>
+            <button type="button" className="secondary-action" onClick={() => { leaveConfirmResolver?.(true); setLeaveConfirmResolver(null); }}>不保存离开</button>
+            <button type="button" className="primary-action" onClick={() => { void confirmLeaveWithSave(); }}>保存并离开</button>
+          </>
+        )}
       />
       <FloatingToolbar groups={settingsToolbarGroups} label="设置保存工具条" />
     </div>

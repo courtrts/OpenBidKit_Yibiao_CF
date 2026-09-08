@@ -550,3 +550,27 @@
   color: var(--yb-text-soft);
   font-size: 13px;
 }
+
+/* [dark] 深色主题：弹窗卡/追问选项/开关等共享组件去白底 */
+[data-theme='dark'] .detail-help-card,
+[data-theme='dark'] .content-regenerate-card,
+[data-theme='dark'] .agent-question-option,
+[data-theme='dark'] .agent-question-custom-answer {
+  background: var(--yb-surface);
+  border-color: var(--yb-border-soft);
+}
+
+[data-theme='dark'] .content-regenerate-card textarea,
+[data-theme='dark'] .agent-question-custom-answer:focus {
+  background: var(--yb-bg);
+  color: var(--yb-text);
+}
+
+[data-theme='dark'] .yb-switch {
+  background: var(--yb-bg);
+  border-color: var(--yb-border-soft);
+}
+
+[data-theme='dark'] .yb-switch-thumb {
+  background: var(--yb-surface);
+}

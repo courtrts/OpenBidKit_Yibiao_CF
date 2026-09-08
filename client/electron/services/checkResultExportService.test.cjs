@@ -292,7 +292,18 @@ test('保存服务在取消时不写文件', async () => {
     dialog: { showSaveDialog: async () => ({ canceled: true }) },
     rejectionCheckStore: { loadRejectionCheck: () => createRejectionState() },
     duplicateCheckStore: { loadDuplicateCheck: () => createDuplicateState() },
-    fileSystem: { writeFileSync: (...args) => writes.push(args) },
+    // 与真实 fs 行为一致：writeFileSync 落临时文件，renameSync 提交为目标路径
+    fileSystem: {
+      writeFileSync: (target, buffer) => writes.push([target, buffer]),
+      renameSync: (from, to) => {
+        const index = writes.findIndex(([target]) => target === from);
+        if (index >= 0) writes[index] = [to, writes[index][1]];
+      },
+      unlinkSync: (target) => {
+        const index = writes.findIndex(([entry]) => entry === target);
+        if (index >= 0) writes.splice(index, 1);
+      },
+    },
     now: () => new Date('2026-09-01T08:09:10.000Z'),
   });
   const result = await service.exportRejectionExcel({ rejectionInputSignature: 'rejection-current', bidSignature: 'bid-current' });
@@ -313,7 +324,18 @@ test('保存服务补充 xlsx 扩展名并写入可重新读取的真实工作�
     },
     rejectionCheckStore: { loadRejectionCheck: () => createRejectionState() },
     duplicateCheckStore: { loadDuplicateCheck: () => createDuplicateState() },
-    fileSystem: { writeFileSync: (...args) => writes.push(args) },
+    // 与真实 fs 行为一致：writeFileSync 落临时文件，renameSync 提交为目标路径
+    fileSystem: {
+      writeFileSync: (target, buffer) => writes.push([target, buffer]),
+      renameSync: (from, to) => {
+        const index = writes.findIndex(([target]) => target === from);
+        if (index >= 0) writes[index] = [to, writes[index][1]];
+      },
+      unlinkSync: (target) => {
+        const index = writes.findIndex(([entry]) => entry === target);
+        if (index >= 0) writes.splice(index, 1);
+      },
+    },
     now: () => new Date(2026, 8, 1, 8, 9, 10),
   });
   const result = await service.exportDuplicateExcel({ signature: 'duplicate-current' });

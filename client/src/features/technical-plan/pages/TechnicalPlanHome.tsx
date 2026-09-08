@@ -1715,6 +1715,9 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
             <div className="export-progress-body">
               <ProgressBar value={exportProgress.progress} label={`Word 导出进度 ${exportProgress.progress}%`} />
               <p>{exportProgress.message || '正在处理导出任务，请稍候。'}</p>
+              {!exportProgress.running && !exportProgress.error && exportProgress.filePath && (
+                <p className="export-result-path" title={exportProgress.filePath}>保存位置：{exportProgress.filePath}</p>
+              )}
               {exportProgress.warnings.length > 0 && (
                 <div className="export-warning-list">
                   <strong>需要核对</strong>

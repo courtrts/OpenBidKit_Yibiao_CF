@@ -3997,3 +3997,12 @@
 .step-overview-item.is-done .step-overview-state {
   color: var(--yb-success-deep);
 }
+
+/* 导出完成后的保存位置：完整路径可见可复制 */
+.export-result-path {
+  margin: 8px 0 0;
+  color: var(--yb-text-soft);
+  font-size: 12px;
+  word-break: break-all;
+  user-select: text;
+}

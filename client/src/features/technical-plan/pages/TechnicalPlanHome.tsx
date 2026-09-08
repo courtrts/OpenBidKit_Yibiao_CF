@@ -1184,7 +1184,7 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
   const openBidTemplate = async () => {
     const result = await window.yibiao?.technicalPlan.openBidTemplate();
     if (!result?.success) {
-      showToast(result?.message || '无法打开投标模版', 'error');
+      showToast(result?.message || '无法打开投标模板', 'error');
     }
   };
 

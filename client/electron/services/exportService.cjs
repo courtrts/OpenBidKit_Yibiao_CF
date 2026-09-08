@@ -2440,7 +2440,15 @@ function createExportService({ configStore } = {}) {
           output_extension: path.extname(result.filePath).toLowerCase(),
           buffer_bytes: buildResult.buffer.length,
         });
-        fs.writeFileSync(result.filePath, buildResult.buffer);
+        // 与仓库其他写盘一致走 temp+rename：磁盘满等场景不在用户可见路径留半截文档
+        const tempFilePath = `${result.filePath}.yibiao-tmp-${Date.now()}`;
+        try {
+          fs.writeFileSync(tempFilePath, buildResult.buffer);
+          fs.renameSync(tempFilePath, result.filePath);
+        } catch (writeError) {
+          try { fs.unlinkSync(tempFilePath); } catch { /* 已不存在则忽略 */ }
+          throw writeError;
+        }
         const message = buildResult.warnings.length
           ? `Word 已导出，但有 ${buildResult.warnings.length} 处图片未能插入，请打开文档核对。`
           : 'Word 已导出，请打开文档核对图片、表格和版式。';

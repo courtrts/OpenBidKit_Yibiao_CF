@@ -76,7 +76,7 @@ function MyTemplatesPage({ onCreateTemplate, onEditTemplate }: MyTemplatesPagePr
       <section className="template-library-panel" aria-label="我的模板">
         <div className="template-library-head">
           <div>
-            <span className="section-kicker">模版设置</span>
+            <span className="section-kicker">模板设置</span>
             <h2>我的模板</h2>
             <p>查看、编辑和删除已保存的标书导出模板。</p>
           </div>

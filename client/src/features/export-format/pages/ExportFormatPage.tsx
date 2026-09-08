@@ -503,7 +503,7 @@ function ExportFormatPage({ mode = 'create', templateId = null, onBack }: Export
 
       return { ...createDefaultExportFormat(), template_name: prev.template_name };
     });
-    showToast('已恢复默认模版设置，保存后生效', 'info');
+    showToast('已恢复默认模板设置，保存后生效', 'info');
   }, [mode, selectedLayoutPresetId, selectedThemePresetId, showToast]);
 
   const handleApplyLayoutPreset = useCallback((presetId: string) => {
@@ -627,7 +627,7 @@ function ExportFormatPage({ mode = 'create', templateId = null, onBack }: Export
   const resetToolbarGroup: FloatingToolbarGroup = {
     id: 'template-reset',
     actions: [
-      { id: 'reset-default', label: '重置默认', variant: 'danger', tooltip: selectedLayoutPresetId || selectedThemePresetId ? '恢复当前预设样式，保存后生效' : '恢复默认模版设置，保存后生效', onClick: handleResetDefault },
+      { id: 'reset-default', label: '重置默认', variant: 'danger', tooltip: selectedLayoutPresetId || selectedThemePresetId ? '恢复当前预设样式，保存后生效' : '恢复默认模板设置，保存后生效', onClick: handleResetDefault },
     ],
   };
   const exportTestToolbarGroup: FloatingToolbarGroup = {
@@ -1256,7 +1256,7 @@ function ExportFormatPage({ mode = 'create', templateId = null, onBack }: Export
   return (
     <div className="settings-page export-template-page">
       <div className="settings-page-scroll export-template-scroll">
-        <div className="settings-tab-shell" role="tablist" aria-label="模版设置分类">
+        <div className="settings-tab-shell" role="tablist" aria-label="模板设置分类">
           {templateTabs.map((tab) => (
             <button
               key={tab.id}
@@ -1328,7 +1328,7 @@ function ExportFormatPage({ mode = 'create', templateId = null, onBack }: Export
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
-      <FloatingToolbar groups={toolbarGroups} label="模版设置保存工具条" />
+      <FloatingToolbar groups={toolbarGroups} label="模板设置保存工具条" />
     </div>
   );
 }

@@ -488,7 +488,7 @@ function BidAnalysisPage({
         showToast(result?.message || '投标范围选择失败', 'error');
         return;
       }
-      onConfigSaved(await window.yibiao.technicalPlan.loadState());
+      onConfigSaved(await window.yibiao?.technicalPlan.loadState());
       setSectionSelectorOpen(false);
       showToast(result.message || '已选择投标范围', 'success');
       if (pendingAnalysisAfterSection) {
@@ -544,8 +544,12 @@ function BidAnalysisPage({
       return;
     }
 
-    await navigator.clipboard.writeText(activeTaskContent);
-    showToast('解析结果已复制', 'success');
+    try {
+      await navigator.clipboard.writeText(activeTaskContent);
+      showToast('解析结果已复制', 'success');
+    } catch {
+      showToast('复制失败，请检查剪贴板权限', 'error');
+    }
   };
 
   const renderConfigTask = (definition: typeof bidAnalysisTasks[number]) => {

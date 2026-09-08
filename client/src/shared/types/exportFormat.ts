@@ -397,7 +397,7 @@ const DEFAULT_HEADING_BORDER: HeadingBorderConfig = {
 
 /** 默认导出格式：章/节 + 三级起局部连续编号 */
 export const DEFAULT_EXPORT_FORMAT: ExportFormatConfig = {
-  template_name: '默认模版',
+  template_name: '默认模板',
   page: { ...DEFAULT_PAGE_SETUP },
   heading_level1_page_break_before: false,
   heading_border: { ...DEFAULT_HEADING_BORDER },

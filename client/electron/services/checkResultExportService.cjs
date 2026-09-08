@@ -403,7 +403,15 @@ function createCheckResultExportService({
       return { success: false, canceled: true, message: '已取消导出' };
     }
     const outputPath = ensureXlsxPath(saveResult.filePath);
-    fileSystem.writeFileSync(outputPath, workbookToBuffer(workbook));
+    // temp+rename 原子写，避免失败时在用户可见路径留半截 xlsx
+    const tempPath = `${outputPath}.yibiao-tmp-${Date.now()}`;
+    try {
+      fileSystem.writeFileSync(tempPath, workbookToBuffer(workbook));
+      fileSystem.renameSync(tempPath, outputPath);
+    } catch (writeError) {
+      try { fileSystem.unlinkSync(tempPath); } catch { /* 已不存在则忽略 */ }
+      throw writeError;
+    }
     return { success: true, path: outputPath, message: 'Excel 已导出' };
   }
 

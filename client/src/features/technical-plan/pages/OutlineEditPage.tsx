@@ -1289,7 +1289,7 @@ function OutlineEditPage({
           )}
           {bidTemplateExists && (
             <button type="button" className="secondary-action" onClick={() => void onOpenBidTemplate?.()}>
-              打开投标模版
+              打开投标模板
             </button>
           )}
           <button

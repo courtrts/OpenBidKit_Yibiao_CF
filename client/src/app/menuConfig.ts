@@ -42,7 +42,7 @@ export const appMenuItems: AppMenuItem[] = [
   },
   {
     id: 'template-settings',
-    label: '模版设置',
+    label: '模板设置',
     description: '标书导出模板与排版配置',
     children: [
       {

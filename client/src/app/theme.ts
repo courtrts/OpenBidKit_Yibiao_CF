@@ -8,14 +8,16 @@ export function isThemeMode(value: unknown): value is ThemeMode {
 
 let systemMediaListener: ((event: MediaQueryListEvent) => void) | null = null;
 
+// matchMedia() 每次调用都返回新实例：用新建实例加的监听器无法通过另一个新实例移除。
+// 模块级复用同一 MediaQueryList，否则每次切主题都会残留一个永不移除的监听器。
+const systemDarkQuery = typeof window.matchMedia === 'function' ? window.matchMedia(SYSTEM_DARK_MEDIA_QUERY) : null;
+
 function resolveEffectiveTheme(mode: ThemeMode): 'light' | 'dark' {
   if (mode !== 'system') {
     return mode;
   }
 
-  return typeof window.matchMedia === 'function' && window.matchMedia(SYSTEM_DARK_MEDIA_QUERY).matches
-    ? 'dark'
-    : 'light';
+  return systemDarkQuery?.matches ? 'dark' : 'light';
 }
 
 /**
@@ -26,15 +28,15 @@ export function applyThemeMode(mode: ThemeMode) {
   document.documentElement.dataset.theme = resolveEffectiveTheme(mode);
 
   if (systemMediaListener) {
-    window.matchMedia(SYSTEM_DARK_MEDIA_QUERY).removeEventListener('change', systemMediaListener);
+    systemDarkQuery?.removeEventListener('change', systemMediaListener);
     systemMediaListener = null;
   }
 
-  if (mode === 'system' && typeof window.matchMedia === 'function') {
+  if (mode === 'system' && systemDarkQuery) {
     systemMediaListener = (event) => {
       document.documentElement.dataset.theme = event.matches ? 'dark' : 'light';
     };
-    window.matchMedia(SYSTEM_DARK_MEDIA_QUERY).addEventListener('change', systemMediaListener);
+    systemDarkQuery.addEventListener('change', systemMediaListener);
   }
 
   void window.yibiao.ui.setNativeTheme(mode).catch(() => {

@@ -141,10 +141,12 @@ function BackgroundTaskTray({ onSectionChange }: BackgroundTaskTrayProps) {
   }, [hasRunning]);
 
   const pauseTask = useCallback((task: TaskEventTask) => {
+    // 发射后不管的请求也要兜住 rejection：暂停失败任务保持运行，托盘状态不会说谎
+    const fail = () => console.warn('[background-task-tray] 暂停请求失败');
     if (task.type === 'content-generation') {
-      void window.yibiao.tasks.pauseContentGeneration();
+      window.yibiao.tasks.pauseContentGeneration().catch(fail);
     } else if (task.type === 'feasibility-content') {
-      void window.yibiao.tasks.pauseFeasibilityContent();
+      window.yibiao.tasks.pauseFeasibilityContent().catch(fail);
     }
   }, []);
 

@@ -26,7 +26,7 @@ const globalFactsModeOptions: Array<{ value: GlobalFactsMode; title: string; des
   {
     value: 'fabricate',
     title: '胡咧咧模式',
-    description: '未在参考材料中找到的直接证据，但经评估，正文中可能用到，为保证全文一致，会由 AI 直接杜撰。如：涉及人员名单，但用户未提供，AI 会编辑不存在的人名。此模式写完的技术方案直接完整可用，无需人工干预。',
+    description: '对未在参考材料中找到直接证据、但经评估正文可能用到的内容，为保证全文一致，会由 AI 直接补全。如：涉及人员名单但用户未提供，AI 会编造不存在的人名。此模式写完的技术方案直接完整可用，无需人工干预。',
   },
   {
     value: 'omit',
@@ -249,8 +249,12 @@ function GlobalFactsPage({
       showToast('当前没有可复制的内容', 'info');
       return;
     }
-    await navigator.clipboard.writeText(draftContent);
-    showToast('全局事实内容已复制', 'success');
+    try {
+      await navigator.clipboard.writeText(draftContent);
+      showToast('全局事实内容已复制', 'success');
+    } catch {
+      showToast('复制失败，请检查剪贴板权限', 'error');
+    }
   };
 
   return (

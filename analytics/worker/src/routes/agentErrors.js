@@ -1,4 +1,4 @@
-import { corsHeaders, json, methodNotAllowed, requireAdmin, unauthorized } from '../http.js';
+import { corsHeaders, internalErrorMessage, json, methodNotAllowed, requireAdmin, unauthorized } from '../http.js';
 import {
   checkAgentErrorReception,
   deleteAgentErrors,
@@ -75,7 +75,7 @@ export async function handleAdminAgentErrorConfig(request, env, url) {
       return json({ code: 0, config: await saveAgentErrorConfig(env, body) }, { headers: { 'Cache-Control': 'no-store' } });
     } catch (error) {
       console.error('[agent-errors] save config failed', error?.message || String(error));
-      return json({ code: 400, message: error?.message || 'save failed' }, { status: 400 });
+      return json({ code: 400, message: internalErrorMessage(error, 'save failed') }, { status: 400 });
     }
   }
   return methodNotAllowed();

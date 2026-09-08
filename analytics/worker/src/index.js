@@ -30,8 +30,9 @@ const routes = new Map([
   ['/health', (request, env) => handleHealth(env)],
   ['/ip-blocks', handlePublicIpBlocks],
   ['/track', handleTrack],
-  ['/agent-errors', handleAgentErrorIngest],
-  ['/license/activate', handleLicenseActivate],
+  // 公开路由中带写路径/外部调用的两个端点也套 safe()，避免未捕获异常变成无 CORS 的裸 1101
+  ['/agent-errors', safe(handleAgentErrorIngest)],
+  ['/license/activate', safe(handleLicenseActivate)],
   ['/notice', handlePublicNotice],
   ['/notice/delivered', handlePublicNoticeDelivered],
   ['/model-info', handlePublicModelInfo],

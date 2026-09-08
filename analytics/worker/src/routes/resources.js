@@ -24,6 +24,10 @@ import { businessDateRangeCondition, getBusinessToday, isValidProjectName, logQu
 
 const allowedImageTypes = new Set(RESOURCE_ALLOWED_IMAGE_TYPES);
 
+// 当日资源点击数的进程内缓存（60s）：公开列表页高频请求下的 AE 调用收敛。
+const RESOURCE_CLICK_CACHE_TTL_MS = 60000;
+const resourceClickCache = new Map();
+
 export async function handlePublicResources(request, env, url) {
   if (request.method !== 'GET') {
     return methodNotAllowed();
@@ -132,6 +136,15 @@ async function queryTodayResourceClickCounts(env, resources, url) {
   }
 
   const today = getBusinessToday();
+  // 公开列表页每次请求都会触发一次当日点击数 AE 查询；展示用统计允许 60s 内复用
+  // 同一（项目|日期|资源集合）的结果，避免未鉴权流量放大 AE SQL API 调用。
+  const resourceKeysCacheKey = [...resourceKeys].sort().join(',');
+  const now = Date.now();
+  const cached = resourceClickCache.get(`${projectName}|${today}|${resourceKeysCacheKey}`);
+  if (cached && now - cached.at < RESOURCE_CLICK_CACHE_TTL_MS) {
+    return cached.stats;
+  }
+
   const dateWhere = businessDateRangeCondition(today, today);
   const sql = `
     SELECT
@@ -147,7 +160,10 @@ async function queryTodayResourceClickCounts(env, resources, url) {
 
   try {
     const result = await queryAnalytics(env, sql);
-    return new Map((result.data || []).map((row) => [row.resourceKey, Number(row.clickCount || 0)]));
+    const stats = new Map((result.data || []).map((row) => [row.resourceKey, Number(row.clickCount || 0)]));
+    if (resourceClickCache.size > 32) resourceClickCache.clear();
+    resourceClickCache.set(`${projectName}|${today}|${resourceKeysCacheKey}`, { at: now, stats });
+    return stats;
   } catch (error) {
     logQueryError('resource clicks', error);
     return new Map();

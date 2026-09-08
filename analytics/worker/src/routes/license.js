@@ -1,4 +1,4 @@
-import { json, methodNotAllowed, requireAdmin, unauthorized } from '../http.js';
+import { internalErrorMessage, json, methodNotAllowed, requireAdmin, unauthorized } from '../http.js';
 import { readLicenseConfig, saveLicenseConfig } from '../services/licenseStore.js';
 import { signPayload, verifySignedObject } from '../services/licenseCrypto.js';
 import { isValidProjectName, normalizeText } from '../utils.js';
@@ -92,7 +92,13 @@ export async function handleLicenseActivate(request, env) {
   const sourceTrusted = await verifySignedObject(env, buildAttestation);
   const untrustedReason = sourceTrusted ? '' : 'build_signature_invalid';
   const config = await readLicenseConfig(env, projectName);
-  const plan = LICENSE_PLANS.has(body.plan) ? body.plan : 'free';
+  // 公开激活端点只签发 free；付费计划走离线签发通道，或携带管理员令牌的请求。
+  // 否则任何人都能自选 enterprise_premium 换取服务端签名的付费授权。
+  const requestedPlan = LICENSE_PLANS.has(body.plan) ? body.plan : 'free';
+  if (requestedPlan !== 'free' && !requireAdmin(request, env)) {
+    return json({ code: 403, message: 'paid plan requires admin token' }, { status: 403 });
+  }
+  const plan = requestedPlan;
   const payload = {
     schemaVersion: 1,
     projectName,
@@ -151,7 +157,7 @@ export async function handleLicenseConfig(request, env, url) {
       return json({ code: 0, config: await saveLicenseConfig(env, body) }, { headers: { 'Cache-Control': 'no-store' } });
     } catch (error) {
       console.error('[license] save config failed', error?.message || String(error));
-      return json({ code: 400, message: error?.message || 'save failed' }, { status: 400 });
+      return json({ code: 400, message: internalErrorMessage(error, 'save failed') }, { status: 400 });
     }
   }
 

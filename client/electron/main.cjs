@@ -552,6 +552,9 @@ function openDeveloperAgentMonitorWindow() {
   return { success: true };
 }
 
+// Windows 通知需要固定的 AppUserModelID，否则渲染进程的系统通知可能不展示。
+app.setAppUserModelId('com.yibiao.openbidkit');
+
 app.whenReady().then(() => {
   // 深色模式：启动时按用户配置同步原生标题栏/系统控件配色。
   // 这里独立创建一个只读用途的 configStore 实例（ipc 层另有单实例负责读写）：
@@ -632,10 +635,13 @@ app.on('before-quit', (event) => {
   }, 8000);
   void Promise.resolve()
     .then(async () => {
-      await closeServicesBeforeExit();
+      // 探测 pending 文件必须在可能挂起的服务清理之前清理：
+      // 若清理卡住触发 8 秒强退，残留的 pending 文件会让下次启动误判
+      // “上次 GPU 探测未完成”而永久静默禁用硬件加速。
       if (gpuStartupState.probeStarted && !gpuRecoveryRelaunchStarted) {
         clearGpuStartupProbe();
       }
+      await closeServicesBeforeExit();
     })
     .catch((error) => {
       console.warn('[electron] before-quit 清理失败', error?.message || String(error));

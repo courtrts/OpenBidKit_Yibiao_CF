@@ -155,6 +155,12 @@ function MarkdownRenderer({
         }
 
         const isExternal = linkMode === 'external' && isExternalHttpUrl(externalUrl);
+        // 协议白名单：招标文件等外部内容可能注入 javascript:/data: 等可执行链接。
+        // 仅放行 http(s) 外链与页内锚点，其余协议一律退化为纯文本，不让 href 落到 DOM。
+        const isAnchor = href.startsWith('#');
+        if (!isExternal && !isAnchor) {
+          return <span key={key} className={className}>{renderedChildren}</span>;
+        }
         return (
           <a
             key={key}

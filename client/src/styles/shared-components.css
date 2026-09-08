@@ -668,3 +668,8 @@
   border-color: var(--yb-border-soft);
   color: var(--yb-text-soft);
 }
+
+/* tooltip 触发包装层：disabled 按钮不派发 hover 事件，由外层 span 承接 */
+.floating-toolbar-trigger {
+  display: inline-flex;
+}

@@ -10,7 +10,8 @@
   --yb-border-soft: #eef2f9;
   --yb-text: #1c2536;
   --yb-text-soft: #66707f;
-  --yb-text-muted: #98a2b3;
+  /* 浅色底上 muted 用于 12px 级提示文字：#98a2b3 对比度仅约 2.5:1，抬到约 4.6:1 */
+  --yb-text-muted: #6b7686;
 
   /* 语义色：成功 / 警告 / 危险，各含主色、深文字、浅背景、边框四档 */
   --yb-success: #168a4a;

@@ -1035,6 +1035,12 @@ function ContentEditPage({
   };
 
   const cancelEditingContent = () => {
+    // “取消”也不丢手改：有未保存修改时先暂存，重新进入编辑该节时可恢复
+    const editing = editingRef.current;
+    if (editing && draftContentRef.current !== editing.content) {
+      recoveredDraftRef.current = { itemId: editing.itemId, content: draftContentRef.current };
+      showToast('修改已暂存，重新编辑该节时可恢复', 'info');
+    }
     editingRef.current = null;
     setEditingItemId(null);
     setIsPreviewing(false);

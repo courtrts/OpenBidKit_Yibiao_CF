@@ -165,9 +165,15 @@ function ToolbarButton({ action }: { action: FloatingToolbarAction }) {
     return button;
   }
 
+  // disabled 按钮不派发 pointer/focus 事件，Tooltip.Trigger 直接包 button 时
+  // “为什么点不了”的解释永远弹不出来：外包一层 span 承接事件
   return (
     <Tooltip.Root>
-      <Tooltip.Trigger asChild>{button}</Tooltip.Trigger>
+      <Tooltip.Trigger asChild>
+        <span className="floating-toolbar-trigger">
+          {button}
+        </span>
+      </Tooltip.Trigger>
       <Tooltip.Portal>
         <Tooltip.Content className="tooltip-content" side="top" align="center" sideOffset={10}>
           {action.tooltip}

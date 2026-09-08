@@ -223,7 +223,7 @@ function registerUnavailableWorkspaceDatabaseIpc(error) {
   ipcMain.on('tasks:subscribe', () => {});
 }
 
-function registerWorkspaceDatabaseStatusIpc({ mainWindow }) {
+function registerWorkspaceDatabaseStatusIpc({ mainWindow, getMainWindow }) {
   let status = {
     phase: 'checking',
     ready: false,
@@ -238,8 +238,9 @@ function registerWorkspaceDatabaseStatusIpc({ mainWindow }) {
       ready: nextStatus?.phase === 'ready' ? true : Boolean(nextStatus?.ready),
       updatedAt: new Date().toISOString(),
     };
-    if (!mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
-      mainWindow.webContents.send('workspace-database:status', status);
+    const target = typeof getMainWindow === 'function' && getMainWindow() ? getMainWindow() : mainWindow;
+    if (!target.isDestroyed() && !target.webContents.isDestroyed()) {
+      target.webContents.send('workspace-database:status', status);
     }
   };
 
@@ -310,7 +311,7 @@ function registerWorkspaceDatabaseServices({ app, configStore, aiService, agentS
   return { sqliteDatabase };
 }
 
-function registerIpcHandlers({ app, mainWindow, checkAndDownloadUpdate, triggerUpdateDownload, quitAndInstall, getLatestVersion, getUpdateDownloadUrl, gpuStartupState = {}, gpuTrialArg = '--yibiao-trial-hardware-acceleration', forceDisableGpuArgs = [], openDeveloperTokenStatsWindow, closeDeveloperTokenStatsWindow, openDeveloperAgentMonitorWindow, closeDeveloperAgentMonitorWindow }) {
+function registerIpcHandlers({ app, mainWindow, getMainWindow, checkAndDownloadUpdate, triggerUpdateDownload, quitAndInstall, getLatestVersion, getUpdateDownloadUrl, gpuStartupState = {}, gpuTrialArg = '--yibiao-trial-hardware-acceleration', forceDisableGpuArgs = [], openDeveloperTokenStatsWindow, closeDeveloperTokenStatsWindow, openDeveloperAgentMonitorWindow, closeDeveloperAgentMonitorWindow }) {
   void checkRequiredOnlineServices();
   const configStore = createConfigStore(app);
   initLocalImageRenderService({ configStore });
@@ -319,8 +320,9 @@ function registerIpcHandlers({ app, mainWindow, checkAndDownloadUpdate, triggerU
   const developerExpansionReplaceTestService = createDeveloperExpansionReplaceTestService({ aiService });
   const donationService = createDonationService({
     app,
-    onPrompt: (payload) => sendToWebContents(mainWindow.webContents, 'donation:prompt', payload),
-    onPaid: () => sendToWebContents(mainWindow.webContents, 'donation:paid'),
+    // macOS 关窗重开后 main 引用会悬空：发送时现取当前存活主窗口
+    onPrompt: (payload) => sendToWebContents(getMainWindow()?.webContents, 'donation:prompt', payload),
+    onPaid: () => sendToWebContents(getMainWindow()?.webContents, 'donation:paid'),
   });
   const autoConfirmationService = createAutoConfirmationService({ configStore });
   const agentService = createAgentService({ app, configStore, aiService, licenseService, autoConfirmationService });
@@ -328,7 +330,7 @@ function registerIpcHandlers({ app, mainWindow, checkAndDownloadUpdate, triggerU
   const openXmlHelperService = createOpenXmlHelperService({ app, configStore });
   const exportService = createExportService({ configStore });
   const systemFontService = createSystemFontService();
-  const databaseStatus = registerWorkspaceDatabaseStatusIpc({ mainWindow });
+  const databaseStatus = registerWorkspaceDatabaseStatusIpc({ mainWindow, getMainWindow });
   let workspaceDatabaseStarted = false;
   let gpuTrialRelaunchStarted = false;
 

@@ -346,6 +346,8 @@ function formatErrorMessage(error) {
 }
 
 function setProgressBar(mainWindow, progress) {
+  const target = typeof getMainWindow === 'function' ? (getMainWindow() || mainWindow) : mainWindow;
+  mainWindow = target;
   if (!mainWindow || mainWindow.isDestroyed()) {
     return;
   }
@@ -707,7 +709,7 @@ async function quitAndInstall(options = {}) {
   return { success: false, message: '更新包尚未下载完成，请先检查更新' };
 }
 
-function setupAutoUpdate({ app, mainWindow }) {
+function setupAutoUpdate({ app, mainWindow, getMainWindow }) {
   if (!app.isPackaged) {
     return;
   }

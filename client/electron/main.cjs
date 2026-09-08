@@ -29,7 +29,8 @@ if (!app.requestSingleInstanceLock()) {
   process.exit(0);
 } else {
   app.on('second-instance', () => {
-    const window = BrowserWindow.getAllWindows()[0];
+    // 主窗口存活则聚焦；仅剩辅助窗口（macOS）时重建主窗口回到主界面
+    const window = getMainWindow ? getMainWindow() : null;
     if (!window) return;
     if (window.isMinimized()) window.restore();
     window.focus();
@@ -378,6 +379,22 @@ async function openExternalUrl(value) {
   }
 }
 
+// 当前存活的 主窗口 引用：macOS 关窗后 activate 会重建窗口，
+// 所有 main→renderer 推送必须经 getMainWindow() 现取现判，
+// 不能长期持有旧窗口引用（悬空引用会让推送静默丢失甚至抛错）。
+let activeMainWindow = null;
+
+function getMainWindow() {
+  return activeMainWindow && !activeMainWindow.isDestroyed() ? activeMainWindow : null;
+}
+
+function attachMainWindowClosedHandlers(win) {
+  win.on('closed', () => {
+    closeDeveloperTokenStatsWindow();
+    closeDeveloperAgentMonitorWindow();
+  });
+}
+
 function createMainWindow() {
   const mainWindow = new BrowserWindow({
     width: 1440,
@@ -418,6 +435,8 @@ function createMainWindow() {
     void openExternalUrl(url);
   });
 
+  attachMainWindowClosedHandlers(mainWindow);
+  activeMainWindow = mainWindow;
   return mainWindow;
 }
 
@@ -573,6 +592,9 @@ app.whenReady().then(() => {
   services = registerIpcHandlers({
     app,
     mainWindow,
+    // 动态访问器：donation/数据库状态等推送按需解析当前存活主窗口，
+    // macOS 关窗重开后不再指向已销毁的旧窗口。
+    getMainWindow,
     checkAndDownloadUpdate,
     triggerUpdateDownload,
     quitAndInstall,
@@ -586,15 +608,12 @@ app.whenReady().then(() => {
     openDeveloperAgentMonitorWindow,
     closeDeveloperAgentMonitorWindow,
   });
-  setupAutoUpdate({ app, mainWindow });
-  mainWindow.on('closed', () => {
-    closeDeveloperTokenStatsWindow();
-    closeDeveloperAgentMonitorWindow();
-  });
+  setupAutoUpdate({ app, mainWindow, getMainWindow });
   void checkBlockedIpAfterStartup();
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
+    // 仅剩辅助窗口（开发者工具等）时也要重建主窗口，不能只看 getAllWindows().length
+    if (!getMainWindow()) {
       createMainWindow();
     }
   });

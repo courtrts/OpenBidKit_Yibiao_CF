@@ -100,17 +100,27 @@ function getElementClassName(element: Element) {
   return element.getAttribute('class') || undefined;
 }
 
+// 外部内容（招标文档/AI 输出）不可信：这些 CSS 属性可用于界面伪装（fixed 覆盖层）、
+// 点击劫持与外域信标（background url），其余视觉/布局属性照常透传。
+const BLOCKED_STYLE_PROPERTIES = /^(position|z-index|inset.*|(top|left|right|bottom)|background.*|content|pointer-events|transform|filter|backdrop-filter)$/i;
+
 // 将 HTML 内联样式转换为 React 可直接使用的样式对象。
 function getElementStyle(element: Element): CSSProperties | undefined {
   const declaration = (element as HTMLElement).style;
   if (!declaration.length) return undefined;
 
-  return Object.fromEntries(Array.from(declaration).map((property) => [
-    property.startsWith('--')
+  const styles: Record<string, string> = {};
+  for (const property of Array.from(declaration)) {
+    if (BLOCKED_STYLE_PROPERTIES.test(property)) continue;
+    const value = declaration.getPropertyValue(property);
+    if (/url\s*\(/i.test(value)) continue;
+    styles[property.startsWith('--')
       ? property
-      : property.replace(/^-ms-/, 'ms-').replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase()),
-    declaration.getPropertyValue(property).trim(),
-  ])) as CSSProperties;
+      : property.replace(/^-ms-/, 'ms-').replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase())] = value;
+  }
+  return Object.keys(styles).length
+    ? (styles as unknown as CSSProperties)
+    : undefined;
 }
 
 function childrenFromDom(nodes: ChildNode[], renderNode: (node: ChildNode, index: number) => ReactNode) {

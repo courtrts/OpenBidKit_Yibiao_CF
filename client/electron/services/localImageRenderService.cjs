@@ -415,9 +415,19 @@ async function waitForLayoutReady(webContents, timeoutMs, minWidth = 1, options 
   throw new Error('等待页面布局稳定超时');
 }
 
+// 消毒待渲染的 HTML（AI 产出/外部内容）：剥离脚本与内联事件属性、禁用 meta 跳转，
+// 截图渲染只需要视觉内容（图片/样式/结构），不需要任何可执行能力。
+function stripExecutableContent(html) {
+  return String(html || '')
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, '')
+    .replace(/<script\b[^>]*\/>/gi, '')
+    .replace(/<meta[^>]+http-equiv\s*=\s*["']?refresh["']?[^>]*>/gi, '')
+    .replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '');
+}
+
 // 包装 HTML：按设计宽度 1240 渲染，完整保留内容，导出时再缩放。
 function buildHtmlDocument(html) {
-  const source = String(html || '').trim();
+  const source = stripExecutableContent(String(html || '').trim());
   const baseStyles = `
 html, body {
   margin: 0 !important;

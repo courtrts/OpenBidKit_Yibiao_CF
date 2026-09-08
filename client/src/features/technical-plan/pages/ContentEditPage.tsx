@@ -318,6 +318,11 @@ function ContentEditPage({
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [draftContent, setDraftContent] = useState('');
+  // 永不丢稿：编辑基线（进入编辑时的内容）、草稿镜像与自动保存失败的暂存
+  const editingRef = useRef<{ itemId: string; content: string } | null>(null);
+  const draftContentRef = useRef('');
+  const recoveredDraftRef = useRef<{ itemId: string; content: string } | null>(null);
+  draftContentRef.current = draftContent;
   const [confirmRegenerateItem, setConfirmRegenerateItem] = useState<OutlineItem | null>(null);
   const [requirementItem, setRequirementItem] = useState<OutlineItem | null>(null);
   const [regenerateRequirement, setRegenerateRequirement] = useState('');
@@ -642,6 +647,23 @@ function ContentEditPage({
     if (!selectedItem || selectedItem.id === editingItemId) {
       return;
     }
+    // 永不丢稿：切走时若编辑草稿有未保存修改，自动保存；保存失败则暂存起来，
+    // 下次进入同一小节编辑时恢复。手写润色是最耗时的人力投入，不能因误点丢失。
+    const editing = editingRef.current;
+    if (editing && draftContentRef.current !== editing.content) {
+      const draftItem = outlineData ? findItem(outlineData.outline, editing.itemId) : null;
+      if (draftItem) {
+        Promise.resolve(onContentSaved(draftItem, draftContentRef.current))
+          .then(() => showToast('上一小节的修改已自动保存', 'success'))
+          .catch(() => {
+            recoveredDraftRef.current = { itemId: editing.itemId, content: draftContentRef.current };
+            showToast('上一小节的草稿自动保存失败，已暂存，重新编辑该节时可恢复', 'info');
+          });
+      } else {
+        recoveredDraftRef.current = { itemId: editing.itemId, content: draftContentRef.current };
+      }
+    }
+    editingRef.current = null;
     setEditingItemId(null);
     setIsPreviewing(false);
     setDraftContent('');
@@ -994,9 +1016,18 @@ function ContentEditPage({
       return;
     }
 
+    // 优先恢复此前自动保存失败的暂存草稿
+    const recoveredDraft = recoveredDraftRef.current?.itemId === selectedItem.id
+      ? recoveredDraftRef.current
+      : null;
+    if (recoveredDraft) {
+      recoveredDraftRef.current = null;
+    }
+    const baselineContent = recoveredDraft ? recoveredDraft.content : selectedContent;
     setEditingItemId(selectedItem.id);
     setIsPreviewing(false);
-    setDraftContent(selectedContent);
+    setDraftContent(baselineContent);
+    editingRef.current = { itemId: selectedItem.id, content: baselineContent };
   };
 
   const togglePreview = () => {
@@ -1004,6 +1035,7 @@ function ContentEditPage({
   };
 
   const cancelEditingContent = () => {
+    editingRef.current = null;
     setEditingItemId(null);
     setIsPreviewing(false);
     setDraftContent('');
@@ -1021,6 +1053,7 @@ function ContentEditPage({
 
     try {
       await onContentSaved(selectedItem, draftContent);
+      editingRef.current = null;
       setEditingItemId(null);
       setIsPreviewing(false);
       showToast('正文已保存', 'success');

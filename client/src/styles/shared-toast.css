@@ -183,3 +183,9 @@
     transform: translateX(calc(100% + 28px));
   }
 }
+
+/* 深色模式：背景改表面色，避免 --yb-text 浅色文字打在白底上不可读 */
+[data-theme='dark'] .app-toast {
+  background: var(--yb-surface);
+  border-color: var(--yb-border-soft);
+}

@@ -256,6 +256,20 @@ function getParentStatus(childStatuses: TreeStatus[]): TreeStatus {
   return 'idle';
 }
 
+// 字数统计按内容值缓存：正文生成期间 sections 每个事件都是新对象引用，
+// 但未更新小节的 content 字符串不变；命中缓存即可把每次事件的全量重算
+// 降为只算变更小节（重型正则字数统计是大文档下卡顿的主因）。
+const wordCountCache = new Map<string, number>();
+
+function countWordsCached(content: string): number {
+  const cached = wordCountCache.get(content);
+  if (cached !== undefined) return cached;
+  const words = countWords(content);
+  if (wordCountCache.size > 2000) wordCountCache.clear();
+  wordCountCache.set(content, words);
+  return words;
+}
+
 function buildOutlineMeta(items: OutlineItem[], sections: ContentGenerationSections, planning: boolean) {
   const meta = new Map<string, OutlineNodeMeta>();
 
@@ -263,7 +277,7 @@ function buildOutlineMeta(items: OutlineItem[], sections: ContentGenerationSecti
     if (!item.children?.length) {
       const baseStatus = getLeafStatus(item, sections);
       const status: TreeStatus = planning && item.content_mode === 'ai-generate' && baseStatus === 'idle' ? 'planning' : baseStatus;
-      const nodeMeta: OutlineNodeMeta = { status, leafCount: 1, words: countWords(getLeafContent(item, sections)) };
+      const nodeMeta: OutlineNodeMeta = { status, leafCount: 1, words: countWordsCached(getLeafContent(item, sections)) };
       meta.set(item.id, nodeMeta);
       return nodeMeta;
     }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import AppRouter from './app/AppRouter';
 import GpuHardwareAccelerationPrompt from './app/GpuHardwareAccelerationPrompt';
 import LicenseStatusPrompt from './app/LicenseStatusPrompt';
@@ -44,15 +44,28 @@ function App() {
     }
   }, [activeSection, developerMode]);
 
-  const requestSectionChange = async (section: SectionId) => {
-    if (section === activeSection) {
+  // activeSectionRef 与 state 同步（developerMode 自动跳转直接 setState 的路径）
+  useEffect(() => {
+    activeSectionRef.current = activeSection;
+  }, [activeSection]);
+
+  // 引用终身稳定：内部经 ref 读取当前板块、经 leaveGuardRef 读取最新守卫，
+  // 避免下游（BackgroundTaskTray 等）的订阅 effect 因 onSectionChange 引用
+  // 变化而反复退订/重订。
+  const activeSectionRef = useRef(activeSection);
+  const requestSectionChange = useCallback(async (section: SectionId) => {
+    if (section === activeSectionRef.current) {
       return;
     }
     const allowed = await (leaveGuardRef.current?.(section) ?? Promise.resolve(true));
     if (allowed) {
+      activeSectionRef.current = section;
       setActiveSection(section);
     }
-  };
+  }, []);
+  const handleSectionChange = useCallback((section: SectionId) => {
+    void requestSectionChange(section);
+  }, [requestSectionChange]);
 
   return (
     <>
@@ -63,13 +76,13 @@ function App() {
       <AppShell
         activeSection={activeSection}
         developerMode={developerMode}
-        onSectionChange={(section) => { void requestSectionChange(section); }}
+        onSectionChange={handleSectionChange}
       >
         <AppRouter
           activeSection={activeSection}
           developerMode={developerMode}
           onDeveloperModeChange={setDeveloperMode}
-          onSectionChange={(section) => { void requestSectionChange(section); }}
+          onSectionChange={handleSectionChange}
           registerLeaveGuard={(guard) => {
             leaveGuardRef.current = guard;
           }}

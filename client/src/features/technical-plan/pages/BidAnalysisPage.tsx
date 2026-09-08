@@ -169,7 +169,8 @@ function formatJsonValue(value: unknown): string {
 }
 
 function JsonResultTable({ content }: { content: string }) {
-  const data = tryParseJsonObject(content);
+  // 实时输出会随任务事件持续增长且本组件随每事件重渲染，parse 必须 memo 化
+  const data = useMemo(() => tryParseJsonObject(content), [content]);
 
   if (!data) {
     return (

@@ -227,7 +227,7 @@ npm run setup:analytics-storage
 | --- | --- |
 | D1 | 创建或复用 `openbidkit-analytics`，binding 为 `ANALYTICS_DB` |
 | R2 | 复用 `openbidkit` 的 `RESOURCE_BUCKET` 保存资源图片、插件当前版与上一版安装包；创建或复用 `openbidkit-agent-errors`，binding 为 `AGENT_ERROR_BUCKET`，配置 7 天删除生命周期 |
-| Cron | 生产账户使用 Workers Paid Plan；确认北京时间 01:00 到 03:00 的 5 个统计 Cron，以及北京时间 04:00 的独立模型信息同步 Cron |
+| Cron | 免费套餐单 Cron 形态：确认 wrangler.jsonc 中仅保留北京时间 01:00 的 `0 17 * * *` 一个触发器（付费恢复方式见下文） |
 | Migration | 通过 Wrangler D1 migrations 执行 `analytics-migrations/*.sql` 并记录已应用版本；自动补齐统计字段；首次创建 `ip_blocks` 后把旧 KV 封禁记录一次性导入 D1，并用 `ip_block_storage_meta` 防止重复迁移 |
 
 如果刚删除过 `openbidkit-analytics`，脚本会重新创建并更新 `wrangler.jsonc` 的 `database_id`。

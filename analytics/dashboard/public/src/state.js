@@ -3,7 +3,6 @@ export const $ = (id) => document.getElementById(id);
 export const state = {
   apiBase: $('apiBase'),
   adminToken: $('adminToken'),
-  rememberToken: $('rememberToken'),
   projectName: $('projectName'),
   projectOptions: $('projectOptions'),
   trafficRange: $('trafficRange'),

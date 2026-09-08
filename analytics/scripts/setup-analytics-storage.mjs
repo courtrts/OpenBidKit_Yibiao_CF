@@ -12,14 +12,10 @@ const d1BindingName = 'ANALYTICS_DB';
 const d1DatabaseName = 'openbidkit-analytics';
 const noticeBindingName = 'NOTICE_STORE';
 const legacyIpBlockKey = 'security:ip-block-list:v1';
-// 这里只维护 5 个埋点汇总 Cron；付费计划下的模型信息同步 Cron 独立配置在 wrangler.jsonc。
-const dailyRollupCrons = [
-  '0 17 * * *',
-  '30 17 * * *',
-  '0 18 * * *',
-  '30 18 * * *',
-  '0 19 * * *',
-];
+// 免费套餐（Workers Free）单账号 cron 上限 5 个，全部汇总已合并为每日 1 个
+// （北京时间 01:00，见 wrangler.jsonc）。本脚本只在配置完全缺失时补上这 1 个，
+// 绝不再扩展回历史上的 5-cron 形态；付费恢复方式见 analytics/README.md。
+const dailyRollupCron = '0 17 * * *';
 
 function readConfig() {
   return readFileSync(workerConfigPath, 'utf8');
@@ -154,26 +150,21 @@ function ensureCronTrigger() {
   let source = readConfig();
   const oldCron = '15 18 * * *';
   if (source.includes(`"${oldCron}"`)) {
-    source = source.replace(`"${oldCron}"`, '"0 18 * * *"');
+    source = source.replace(`"${oldCron}"`, '"0 17 * * *"');
     writeConfig(source);
   }
 
   source = readConfig();
-  const missingCrons = dailyRollupCrons.filter((cron) => !source.includes(`"${cron}"`));
-  if (!missingCrons.length) {
-    console.log(`Analytics staged daily rollup crons configured: ${dailyRollupCrons.join(', ')}`);
-    return;
-  }
-
+  // 免费套餐单 cron 形态：已有任何 crons 配置就原样保留（不扩展、不回写历史
+  // 多 cron），只在整个 triggers 配置缺失时补上单 cron。
   const cronsPattern = /"crons"\s*:\s*\[/;
   if (cronsPattern.test(source)) {
-    writeConfig(source.replace(cronsPattern, `"crons": [\n      ${missingCrons.map((cron) => `"${cron}"`).join(',\n      ')},`));
-    console.log(`Analytics staged daily rollup crons added: ${missingCrons.join(', ')}`);
+    console.log('Analytics cron triggers already configured (free-plan single-cron form preserved).');
     return;
   }
 
-  writeConfig(insertTopLevelObjectBlock(source, 'triggers', `    "crons": [\n      ${dailyRollupCrons.map((cron) => `"${cron}"`).join(',\n      ')}\n    ]`));
-  console.log(`Analytics staged daily rollup crons configured: ${dailyRollupCrons.join(', ')}`);
+  writeConfig(insertTopLevelObjectBlock(source, 'triggers', `    "crons": [\n      "${dailyRollupCron}"\n    ]`));
+  console.log(`Analytics daily rollup cron configured: ${dailyRollupCron}`);
 }
 
 function printCredentialHelp(output) {

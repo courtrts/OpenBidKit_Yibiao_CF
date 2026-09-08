@@ -200,7 +200,6 @@ function bindEvents() {
 
   state.apiBase.addEventListener('change', saveSettingsAndClearCache);
   state.adminToken.addEventListener('change', saveSettingsAndClearCache);
-  state.rememberToken.addEventListener('change', saveSettings);
   state.projectName.addEventListener('change', saveSettingsAndClearCache);
   state.ipDate.addEventListener('change', () => refreshActiveTab({ resetIpPage: true, forceRefresh: true }));
   state.allIpDatesButton.addEventListener('click', () => {

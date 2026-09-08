@@ -62,11 +62,7 @@
           </label>
           <label class="topbar-field topbar-token">
             <span>ADMIN_TOKEN</span>
-            <input id="adminToken" type="password" placeholder="输入 Worker Secret 中的 ADMIN_TOKEN" />
-          </label>
-          <label class="topbar-field topbar-checkbox">
-            <input id="rememberToken" type="checkbox" />
-            <span>记住 Token</span>
+            <input id="adminToken" type="password" autocomplete="new-password" placeholder="输入 Worker Secret 中的 ADMIN_TOKEN" />
           </label>
           <label class="topbar-field topbar-project">
             <span>项目</span>
@@ -880,7 +876,7 @@
   <!-- 窄屏遮罩 -->
   <div class="sidebar-overlay" id="sidebarOverlay"></div>
 
-  <script src="https://cdn.jsdelivr.net/npm/markdown-it@14.2.0/dist/markdown-it.min.js"></script>
+  <script src="./vendor/markdown-it.min.js"></script>
   <script type="module" src="./src/main.js"></script>
   <script>
     // 侧边栏逻辑：宽屏折叠 / 窄屏抽屉

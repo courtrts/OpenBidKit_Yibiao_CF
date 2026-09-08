@@ -35,22 +35,18 @@ export function saveSettings() {
   localStorage.setItem('analytics_latest_event_filter', state.latestEventFilter.value);
 
   const token = state.adminToken.value.trim();
+  // 安全考虑：ADMIN_TOKEN 只存 sessionStorage（标签页生命周期），
+  // 不再提供 localStorage 明文持久化；“记住 Token”已移除。
   sessionStorage.setItem('analytics_admin_token', token);
-  if (state.rememberToken.checked) {
-    localStorage.setItem('analytics_remember_token', 'true');
-    localStorage.setItem('analytics_admin_token', token);
-  } else {
-    localStorage.removeItem('analytics_remember_token');
-    localStorage.removeItem('analytics_admin_token');
-  }
+  localStorage.removeItem('analytics_remember_token');
+  localStorage.removeItem('analytics_admin_token');
 }
 
 export function loadSettings() {
   const businessToday = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date());
   state.apiBase.value = normalizeApiBase(localStorage.getItem('analytics_api_base') || state.apiBase.value);
   state.apiBase.disabled = !isLocalDashboard();
-  state.rememberToken.checked = localStorage.getItem('analytics_remember_token') === 'true';
-  state.adminToken.value = sessionStorage.getItem('analytics_admin_token') || (state.rememberToken.checked ? localStorage.getItem('analytics_admin_token') : '') || '';
+  state.adminToken.value = sessionStorage.getItem('analytics_admin_token') || '';
   state.projectName.value = localStorage.getItem('analytics_project_name') || state.projectName.value;
   state.trafficRange.value = localStorage.getItem('analytics_traffic_range') || 'history';
   state.configRange.value = localStorage.getItem('analytics_config_range') || 'history';

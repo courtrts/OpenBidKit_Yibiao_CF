@@ -7,7 +7,7 @@ let markdownRenderer;
 // 使用与客户端相同的基础配置渲染公告 Markdown，并允许公告内嵌 HTML。
 function renderNoticePreview() {
   markdownRenderer ||= window.markdownit({
-    html: true,
+    html: false, // 预览不做原始 HTML 透传，公告内容一律按 Markdown 纯文本渲染
     linkify: false,
     typographer: false,
     breaks: false,

@@ -2496,9 +2496,9 @@ export async function backfillClientActivityWindow(env, projectName, startDate, 
 
 async function queryHistoricalResourceClickRows(env, activityDate, projectNames) {
   // 点击数是全历史累计语义（覆盖写回资源库），保留无下界上限条件；
-  // 但 AE 事件保留期即 90 天（与 latest.js 的 90 天窗口同一假设），
-  // 叠加一个保留期下界不改变结果，却让每次重算的 AE 扫描真正收敛。
-  const retentionLowerMs = Date.parse(`${getBusinessDateDaysAgo(90)}T00:00:00Z`) - 8 * 3600000;
+  // 叠加一个远超 AE 保留期（90 天）的下界不改变结果，却让每次重算的
+  // AE 扫描真正收敛。边界放宽到 365 天，确保不与保留期边界产生临界缝隙。
+  const retentionLowerMs = Date.parse(`${getBusinessDateDaysAgo(365)}T00:00:00Z`) - 8 * 3600000;
   const retentionLowerUtc = new Date(retentionLowerMs).toISOString().replace('T', ' ').slice(0, 19);
   const result = await queryAnalytics(env, `
     SELECT blob9 AS resourceKey, SUM(_sample_interval) AS clickCount

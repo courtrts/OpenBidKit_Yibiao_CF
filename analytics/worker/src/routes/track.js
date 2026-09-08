@@ -14,6 +14,13 @@ export async function handleTrack(request, env) {
     return methodNotAllowed();
   }
 
+  // 埋点事件体积很小；超大 body 的 JSON.parse 是 10ms CPU 预算下的廉价打点，
+  // 先按声明长度拒绝（头缺失时放行，交由后续解析校验兜底）。
+  const declaredLength = Number(request.headers.get('Content-Length') || '');
+  if (Number.isFinite(declaredLength) && declaredLength > 4096) {
+    return json({ code: 413, message: 'payload too large' }, { status: 413 });
+  }
+
   try {
     const body = await request.json();
     const event = normalizeTrackBody(body, request);

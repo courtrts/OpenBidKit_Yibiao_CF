@@ -273,8 +273,16 @@ export async function storeAgentError(env, meta, compressedBody, retentionDays =
     ).run();
     return { accepted: true, reportId: meta.reportId };
   } catch (error) {
-    await bucket.delete(objectKey).catch(() => undefined);
+    // 并发同 reportId：后者 INSERT 撞主键时，R2 对象与配额属于先成功的请求，
+    // 删除共享对象会让前者的日志行悬空（存在但下载 404），因此跳过删除。
+    const isDuplicate = /UNIQUE constraint failed|PRIMARY KEY/i.test(String(error?.message || ''));
+    if (!isDuplicate) {
+      await bucket.delete(objectKey).catch(() => undefined);
+    }
     await releaseStorage(db, meta.projectName, meta.compressedBytes).catch(() => undefined);
+    if (isDuplicate) {
+      return { accepted: true, duplicate: true };
+    }
     throw error;
   }
 }

@@ -16,6 +16,7 @@ import type { OutlineData, OutlineItem, OutlineWordControlOptions, WordExportPro
 import type { ExportFormatConfig, ExportTemplateRecord } from '../../../shared/types/exportFormat';
 import { DEFAULT_EXPORT_FORMAT } from '../../../shared/types/exportFormat';
 import type { SectionId } from '../../../shared/types/navigation';
+import { onAppShortcut } from '../../../shared/shortcuts/appShortcuts';
 import { buildExportFormatCssVars } from '../../../shared/utils/exportFormatCss';
 import { countReadableWords } from '../../../shared/utils/wordCount';
 
@@ -59,13 +60,16 @@ interface WordControlWarningDialogState {
 
 const PET_PLUGIN_ID = 'openbidkit-pet';
 
-const steps: TechnicalPlanStep[] = [
+// “扩写改写”仍是开发中的占位能力，不进入正式流程导航：
+// 从步骤序列移除后，下一步按钮在“生成正文”即到流程终点。
+type NavigableTechnicalPlanStep = Exclude<TechnicalPlanStep, 'expand'>;
+
+const steps: NavigableTechnicalPlanStep[] = [
   'document-analysis',
   'bid-analysis',
   'outline-generation',
   'global-facts',
   'content-edit',
-  'expand',
 ];
 
 const stepLabels: Record<TechnicalPlanStep, string> = {
@@ -353,7 +357,9 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
   const workflowSwitchResolverRef = useRef<((allowed: boolean) => void) | null>(null);
   const skippedWorkflowSwitchPromptRef = useRef<TechnicalPlanWorkflowKind | null>(null);
   const lastExecutedWorkflowSwitchRef = useRef<TechnicalPlanWorkflowKind | null>(null);
-  const activeIndex = steps.indexOf(state.step);
+  // 历史存量里 step 可能仍为 'expand'（占位步），indexOf 会得到 -1：
+  // 上一步禁用、下一步回到第一步，页面自身仍渲染占位块作为恢复出口。
+  const activeIndex = steps.indexOf(state.step as NavigableTechnicalPlanStep);
   const requiredBidAnalysisReady = areRequiredBidAnalysisTasksReady(state.bidAnalysisTasks);
   const isBidSectionExtractionRunning = state.bidSectionExtractionTask?.status === 'running' || state.bidSectionExtractionTask?.status === 'pausing';
   const isBidAnalysisTaskRunning = state.bidAnalysisTask?.status === 'running' || state.bidAnalysisTask?.status === 'pausing';
@@ -679,6 +685,38 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
     if (nextStep) {
       await switchStep(nextStep);
     }
+  };
+
+  // Alt+←/→ 快捷切步：复用工具条同一切换路径（继承排序守卫、字数检查等全部拦截）
+  const goToOffsetRef = useRef(goToOffset);
+  useEffect(() => {
+    goToOffsetRef.current = goToOffset;
+  });
+  useEffect(() => onAppShortcut((action) => {
+    if (action === 'step-prev') {
+      void goToOffsetRef.current(-1);
+    }
+    if (action === 'step-next') {
+      void goToOffsetRef.current(1);
+    }
+  }), []);
+
+  // 流程总览：每步三态（待开始/进行中/已完成），数据全部来自现有状态派生
+  const isTaskBusy = (task?: BackgroundTaskState) => task?.status === 'running' || task?.status === 'pausing';
+  const stepStatuses: Record<NavigableTechnicalPlanStep, 'pending' | 'running' | 'done'> = {
+    'document-analysis': state.tenderFile ? 'done' : 'pending',
+    'bid-analysis': isTaskBusy(state.bidSectionExtractionTask) || isTaskBusy(state.bidAnalysisTask)
+      ? 'running'
+      : Object.keys(state.bidAnalysisTasks || {}).length > 0 ? 'done' : 'pending',
+    'outline-generation': isTaskBusy(state.outlineGenerationTask) || isTaskBusy(state.outlineAdjustmentTask)
+      ? 'running'
+      : state.outlineData ? 'done' : 'pending',
+    'global-facts': isTaskBusy(state.globalFactsTask) || isTaskBusy(state.globalFactsAdjustmentTask)
+      ? 'running'
+      : state.globalFacts.length > 0 ? 'done' : 'pending',
+    'content-edit': isTaskBusy(state.contentGenerationTask)
+      ? 'running'
+      : Object.values(state.contentGenerationSections || {}).some((section) => section?.content) ? 'done' : 'pending',
   };
 
   useEffect(() => {
@@ -1324,6 +1362,26 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
 
   return (
     <div className="page-stack technical-workbench">
+      <nav className="step-overview" aria-label="流程总览">
+        {steps.map((step, index) => {
+          const status = stepStatuses[step];
+          const current = step === state.step;
+          return (
+            <button
+              key={step}
+              type="button"
+              className={`step-overview-item is-${status}${current ? ' is-current' : ''}`}
+              onClick={() => { void switchStep(step); }}
+            >
+              <span className="step-overview-index" aria-hidden="true">{index + 1}</span>
+              <span className="step-overview-label">{stepLabels[step]}</span>
+              <span className="step-overview-state">
+                {status === 'running' ? '进行中' : status === 'done' ? '已完成' : current ? '当前步骤' : ''}
+              </span>
+            </button>
+          );
+        })}
+      </nav>
       {state.step === 'document-analysis' && (
         <DocumentAnalysisPage
           workflowKind={workflowKind}

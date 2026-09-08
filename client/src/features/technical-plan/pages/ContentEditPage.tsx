@@ -1,7 +1,8 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import * as Popover from '@radix-ui/react-popover';
-import { memo, useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { trackConfigUsage } from '../../../shared/analytics/analytics';
+import { onAppShortcut } from '../../../shared/shortcuts/appShortcuts';
 import { AppSwitch, MarkdownEditor, MarkdownFullscreenViewer, MarkdownRenderer, ProgressBar, useToast } from '../../../shared/ui';
 import { OUTLINE_CONTENT_MODE_LABELS } from '../../../shared/types';
 import type { ClientConfig, ImageModelStatus, OutlineContentMode, OutlineData, OutlineItem, OutlineWordControlOptions } from '../../../shared/types';
@@ -1027,6 +1028,17 @@ function ContentEditPage({
       showToast(error instanceof Error ? error.message : '正文保存失败', 'error');
     }
   };
+
+  // Ctrl+S 快捷保存：仅在编辑态生效；经 ref 转发保证始终调用最新的保存实现
+  const saveEditingRef = useRef(saveEditingContent);
+  useEffect(() => {
+    saveEditingRef.current = saveEditingContent;
+  }, [saveEditingContent]);
+  useEffect(() => onAppShortcut((action) => {
+    if (action === 'save' && editing) {
+      void saveEditingRef.current();
+    }
+  }), [editing]);
 
   const renderTree = (items: OutlineItem[], level = 0): ReactNode => items.map((item) => {
     const meta = outlineMeta.get(item.id);

@@ -759,6 +759,15 @@ function OutlineEditPage({
     }
 
     try {
+      const previous = findOutlineItem(outlineData.outline, editingItemId);
+      // 仅标题/描述文案变化时保留已生成正文：这类编辑不影响正文的可复用性，
+      // 清空（不可恢复）代价远大于收益；叶子节点内容模式变化才清空对应正文。
+      const prevMode = (previous?.content_mode || 'ai-generate') as string;
+      const prevNote = previous?.content_mode_note || undefined;
+      const isLeaf = !previous?.children?.length;
+      const nextNote = isLeaf && editContentMode === 'other' ? editContentModeNote.trim() || undefined : undefined;
+      const contentModeChanged = Boolean(previous) && isLeaf
+        && (prevMode !== editContentMode || prevNote !== nextNote);
       await saveOutlineChange(updateOutlineItem(outlineData.outline, editingItemId, (item) => ({
         ...item,
         title: editTitle.trim() || item.title,
@@ -767,9 +776,9 @@ function OutlineEditPage({
           content_mode: editContentMode,
           content_mode_note: editContentMode === 'other' ? editContentModeNote.trim() || undefined : undefined,
         } : {}),
-      })), 'edit', [editingItemId]);
+      })), 'edit', contentModeChanged ? [editingItemId] : []);
       setEditingItemId(null);
-      showToast('目录项已更新，相关正文已清空', 'success');
+      showToast(contentModeChanged ? '目录项已更新，相关正文已清空' : '目录项已更新，已保留该节正文，可按需重新生成', 'success');
     } catch (error) {
       showToast(error instanceof Error ? error.message : '保存目录项失败', 'error');
     }

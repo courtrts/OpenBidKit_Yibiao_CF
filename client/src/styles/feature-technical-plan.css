@@ -3907,3 +3907,93 @@
 [data-theme='dark'] .outline-detail-body select {
   color: var(--yb-text);
 }
+
+/* 流程总览 Stepper：六步（现为五步）流程的位置/进度一目了然，可点击直达 */
+.step-overview {
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+  flex-wrap: wrap;
+}
+
+.step-overview-item {
+  display: flex;
+  flex: 1 1 150px;
+  gap: 9px;
+  align-items: center;
+  padding: 10px 13px;
+  color: var(--yb-text-soft);
+  background: var(--yb-surface);
+  border: 1px solid var(--yb-border-soft);
+  border-radius: var(--yb-radius-lg);
+  box-shadow: var(--yb-shadow-xs);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color var(--yb-duration-fast) ease, box-shadow var(--yb-duration-fast) ease,
+    transform var(--yb-duration-fast) ease;
+}
+
+.step-overview-item:hover {
+  border-color: rgba(33, 116, 253, 0.35);
+  box-shadow: var(--yb-shadow-sm);
+  transform: translateY(-1px);
+}
+
+.step-overview-item.is-current {
+  border-color: rgba(33, 116, 253, 0.45);
+  box-shadow: 0 0 0 3px rgba(33, 116, 253, 0.12);
+}
+
+.step-overview-item.is-done .step-overview-index {
+  color: var(--yb-success-deep);
+  background: var(--yb-success-soft);
+  border-color: var(--yb-success-border);
+}
+
+.step-overview-item.is-running .step-overview-index {
+  color: var(--yb-primary);
+  background: rgba(33, 116, 253, 0.12);
+  border-color: rgba(33, 116, 253, 0.3);
+  animation: agent-runtime-pulse 1.2s ease-in-out infinite;
+}
+
+.step-overview-index {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--yb-text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  background: var(--yb-bg);
+  border: 1px solid var(--yb-border-soft);
+  border-radius: 999px;
+}
+
+.step-overview-label {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.step-overview-state {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--yb-text-muted);
+  font-size: 11px;
+}
+
+.step-overview-item.is-current .step-overview-state {
+  color: var(--yb-primary);
+}
+
+.step-overview-item.is-running .step-overview-state {
+  color: var(--yb-primary);
+}
+
+.step-overview-item.is-done .step-overview-state {
+  color: var(--yb-success-deep);
+}

@@ -516,3 +516,37 @@
   }
 
 }
+
+/* 快捷键速记面板 */
+.shortcut-help-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.shortcut-help-list li {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.shortcut-help-list kbd {
+  display: inline-block;
+  min-width: 64px;
+  padding: 4px 10px;
+  color: var(--yb-text);
+  font-size: 12px;
+  font-family: inherit;
+  text-align: center;
+  background: var(--yb-bg);
+  border: 1px solid var(--yb-border);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+}
+
+.shortcut-help-list span {
+  color: var(--yb-text-soft);
+  font-size: 13px;
+}

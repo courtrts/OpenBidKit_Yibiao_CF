@@ -160,7 +160,8 @@ export function validateTrackEvent(event) {
   if (event.event === 'agent_runtime' && !AGENT_RUNTIME_KIND_PATTERN.test(event.agentRuntimeKind)) return 'invalid agent_runtime_kind';
   if (event.event === 'agent_runtime' && !AGENT_RUNTIME_STATUSES.has(event.agentRuntimeStatus)) return 'invalid agent_runtime_status';
   if (!event.clientId) return 'missing client_id';
-  if (!event.clientCreatedAt) return 'missing client_created_at';
+  // 与 version 同标准做格式校验：日期类字段进 AE 后被留存统计按字典序采信
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(event.clientCreatedAt)) return 'invalid client_created_at';
   if (!event.version) return 'missing version';
   return '';
 }

@@ -1866,7 +1866,11 @@ async function queryRollupClientActivityRows(env, startDate, endDate, projectNam
     activityDate: normalizeText(row.activityDate, 10),
     clientId: normalizeText(row.clientId, 120),
     clientCreatedDate: normalizeText(row.clientCreatedDate, 20).slice(0, 10),
-  })).filter((row) => row.projectName && row.activityDate && row.clientId && row.clientCreatedDate);
+  })).filter((row) => row.projectName && row.activityDate && row.clientId && row.clientCreatedDate)
+    // client_created_at 来自无鉴权上报且 AE 侧无格式校验：非 YYYY-MM-DD 的脏值
+    // 会以字典序混入留存 cohort（date() 计算返回 NULL 导致留存永不命中），
+    // 这里统一按严格格式过滤，对合法数据零语义变化。
+    .filter((row) => /^\d{4}-\d{2}-\d{2}$/.test(row.clientCreatedDate));
 }
 
 function prepareClientStatements(db, rows, updatedAt) {
@@ -2737,7 +2741,16 @@ export async function rollupYesterdayForAllProjects(env) {
 export async function catchUpIncompleteRollups(env, days = 7) {
   const db = requireStatsDb(env);
   const results = [];
+  // 单次 cron 的补跑总量预算：免费套餐 CPU 上限会在某个“项目-日”处掐断整个调用，
+  // 无预算时最坏情况是每晚都死在同一步骤、积压窗口自我扩张。
+  // 有预算则其余“项目-日”顺延到后续 cron（幂等标记保证不丢不重）。
+  const MAX_CATCHUP_PROJECT_DAYS = 12;
+  let projectDaysBudget = MAX_CATCHUP_PROJECT_DAYS;
   for (let back = days; back >= 1; back -= 1) {
+    if (projectDaysBudget <= 0) {
+      console.warn(`[analytics] catch-up budget exhausted (${MAX_CATCHUP_PROJECT_DAYS} project-days), remaining days deferred`);
+      break;
+    }
     const activityDate = getBusinessDateDaysAgo(back);
     // runs 行在 discovery 阶段的 AE 查询成功后才写入：discovery 失败（AE 抖动/限流）
     // 会让当天零行，下面的"不完整"扫描永远看不到这一天 → 该业务日汇总永久缺失。
@@ -2756,8 +2769,10 @@ export async function catchUpIncompleteRollups(env, days = 7) {
         console.warn(`[analytics] catch-up discovery failed for ${activityDate}: ${error?.message || String(error)}`);
       }
       for (const projectName of projectNames) {
+        if (projectDaysBudget <= 0) break;
         try {
           const result = await rollupStatsDay(env, projectName, activityDate);
+          projectDaysBudget -= 1;
           results.push({ activityDate, projectName, ...result });
         } catch (error) {
           console.warn(`[analytics] catch-up rollup failed: ${projectName}/${activityDate} ${error?.message || String(error)}`);
@@ -2774,8 +2789,10 @@ export async function catchUpIncompleteRollups(env, days = 7) {
     for (const row of incomplete) {
       const projectName = normalizeProjectName(row.projectName);
       if (!projectName) continue;
+      if (projectDaysBudget <= 0) break;
       try {
         const result = await rollupStatsDay(env, projectName, activityDate);
+        projectDaysBudget -= 1;
         results.push({ activityDate, projectName, ...result });
       } catch (error) {
         console.warn(`[analytics] catch-up rollup failed: ${projectName}/${activityDate} ${error?.message || String(error)}`);

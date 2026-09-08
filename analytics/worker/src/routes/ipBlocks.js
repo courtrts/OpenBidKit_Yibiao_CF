@@ -23,7 +23,9 @@ export async function handlePublicIpBlocks(request, env) {
       clientIp: getRequestClientIp(request),
       blockedIps,
     }, { headers: { 'Cache-Control': 'no-store' } });
-  } catch {
+  } catch (error) {
+    // 失败开放是设计，但必须留排障线索
+    console.error('[analytics] public ip-blocks read failed', error?.message || String(error));
     return json({ code: 0, clientIp: '', blockedIps: [] }, { headers: { 'Cache-Control': 'no-store' } });
   }
 }

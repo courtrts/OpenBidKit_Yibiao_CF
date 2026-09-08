@@ -37,7 +37,9 @@ export async function isRequestIpBlocked(env, request) {
   if (!clientIp) return false;
   try {
     return (await loadBlockedIps(env)).includes(clientIp);
-  } catch {
+  } catch (error) {
+    // “失败开放”是有意设计，但必须可观测：封禁失效静默等于不可告警
+    console.error('[analytics] ip block check degraded', error?.message || String(error));
     return blockedIpsCache.ips.length > 0 && blockedIpsCache.ips.includes(clientIp);
   }
 }

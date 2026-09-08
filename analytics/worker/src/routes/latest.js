@@ -30,7 +30,7 @@ export async function handleLatest(request, env, url) {
 
   const totalSql = `
     SELECT
-      COUNT() AS total
+      SUM(_sample_interval) AS total
     FROM ${DATASET}
     WHERE blob1 = ${project}
       AND ${dateWindow}

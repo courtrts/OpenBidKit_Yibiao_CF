@@ -280,6 +280,11 @@ export async function recordTrackClient(env, event) {
         FROM stats_blocked_clients
         WHERE project_name = ? AND client_id = ?
       )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM stats_blocked_version_clients
+        WHERE project_name = ? AND client_id = ?
+      )
       ON CONFLICT(project_name, client_id) DO NOTHING
     `, [
       event.projectName,
@@ -296,6 +301,8 @@ export async function recordTrackClient(env, event) {
       event.untrustedReason || '',
       updatedAt,
       updatedAt,
+      event.projectName,
+      event.clientId,
       event.projectName,
       event.clientId,
     ]);
@@ -324,6 +331,11 @@ export async function recordTrackClient(env, event) {
       untrusted_reason = CASE WHEN ? != '' THEN ? ELSE untrusted_reason END,
       updated_at = ?
     WHERE project_name = ? AND client_id = ?
+      AND NOT EXISTS (
+        SELECT 1
+        FROM stats_blocked_version_clients
+        WHERE project_name = ? AND client_id = ?
+      )
   `, [
     event.licenseStatus || '',
     event.licenseStatus || '',
@@ -336,6 +348,8 @@ export async function recordTrackClient(env, event) {
     event.untrustedReason || '',
     event.untrustedReason || '',
     updatedAt,
+    event.projectName,
+    event.clientId,
     event.projectName,
     event.clientId,
   ]);

@@ -236,6 +236,11 @@ async function handleAdminSaveResource(request, env, url) {
 
     return json({ code: 0, resource });
   } catch (error) {
+    // 上传成功但 D1 保存失败时回收刚上传的新图，避免 R2 孤儿对象慢性累积
+    //（新 key 唯一且此后无人引用；旧图保持原状，等价于本次保存未发生）。
+    if (imageFile && imageKey && imageKey !== oldImageKey) {
+      await deleteStoredImage(env, imageKey).catch(() => undefined);
+    }
     console.error('[analytics] save resource failed', error?.message || String(error));
     return json({ code: 500, message: internalErrorMessage(error, 'resource save failed') }, { status: 500 });
   }

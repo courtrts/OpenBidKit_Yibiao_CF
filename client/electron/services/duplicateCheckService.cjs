@@ -1,4 +1,5 @@
 const fs = require('node:fs/promises');
+const fsSync = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { pathToFileURL } = require('node:url');
@@ -259,8 +260,14 @@ function addDecodedBase64Fields(fields) {
 }
 
 async function hashFileSha256(filePath) {
-  const buffer = await fs.readFile(filePath);
-  return crypto.createHash('sha256').update(buffer).digest('hex');
+  // 投标文件可达数百 MB，流式读取计算哈希，避免整文件载入内存的峰值
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const stream = fsSync.createReadStream(filePath);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('error', reject);
+    stream.on('end', () => resolve(hash.digest('hex')));
+  });
 }
 
 function hashText(value) {

@@ -17,6 +17,7 @@ function broadcastTextTokenStats(stats) {
 function registerDeveloperIpc({ configStore, aiService, agentService, openDeveloperTokenStatsWindow, openDeveloperAgentMonitorWindow, developerExpansionReplaceTestService }) {
   let monitorSenderId = null;
   let unsubscribeMonitor = null;
+  let monitorDestroyedSenderId = null;
 
   function detachMonitor(senderId) {
     if (senderId !== undefined && senderId !== null && senderId !== monitorSenderId) return;
@@ -61,7 +62,14 @@ function registerDeveloperIpc({ configStore, aiService, agentService, openDevelo
       }
       sender.send('developer-agent-monitor:event', monitorEvent);
     });
-    sender.once('destroyed', () => detachMonitor(sender.id));
+    // 同一 webContents 反复 attach 时避免叠加多个 once('destroyed') 监听器
+    if (monitorDestroyedSenderId !== sender.id) {
+      monitorDestroyedSenderId = sender.id;
+      sender.once('destroyed', () => {
+        if (monitorDestroyedSenderId === sender.id) monitorDestroyedSenderId = null;
+        detachMonitor(sender.id);
+      });
+    }
     return agentService.getMonitorSnapshot();
   });
 

@@ -525,6 +525,12 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
   }
 
   function subscribe(webContents) {
+    // 已订阅的 webContents 直接跳过：重复 subscribe 会在其上叠加多个
+    // once('destroyed') 监听器（MaxListeners 警告来源），且回显快照会被
+    // 渲染层"事件→查询→再回显"放大成自激循环。
+    if (subscribers.has(webContents)) {
+      return;
+    }
     subscribers.add(webContents);
     for (const task of activeTasks.values()) {
       if (!webContents.isDestroyed()) {

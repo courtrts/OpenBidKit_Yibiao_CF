@@ -70,12 +70,20 @@ function BackgroundTaskTray({ onSectionChange }: BackgroundTaskTrayProps) {
     };
 
     refresh();
-    const unsubscribe = window.yibiao.tasks.onTaskEvent(() => {
-      // 任务数量有限，事件触发时整体刷新比增量维护更稳
-      refresh();
-    });
+    // 任务数量有限，事件触发时整体刷新比增量维护更稳；生成期间事件频率很高，
+    // 用 300ms 尾沿合并，避免每个事件都发起一次 get-active 往返。
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleRefresh = () => {
+      if (refreshTimer) return;
+      refreshTimer = setTimeout(() => {
+        refreshTimer = null;
+        refresh();
+      }, 300);
+    };
+    const unsubscribe = window.yibiao.tasks.onTaskEvent(scheduleRefresh);
     return () => {
       cancelled = true;
+      if (refreshTimer) clearTimeout(refreshTimer);
       unsubscribe();
     };
   }, []);

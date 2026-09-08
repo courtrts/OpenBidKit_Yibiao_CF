@@ -623,6 +623,13 @@ app.on('before-quit', (event) => {
   }
   closeBeforeQuitStarted = true;
   appQuitting = true;
+  // 清理必须让位于退出：closeServicesBeforeExit 里会等待所有运行中任务与
+  // 子进程结束，任一环节挂起（如子进程被安全软件阻断）会导致进程永不退出，
+  // 叠加单实例锁后用户连重启都做不到。这里 8 秒兜底强制退出。
+  const forceQuitTimer = setTimeout(() => {
+    console.warn('[electron] before-quit 清理超时，强制退出');
+    app.exit(0);
+  }, 8000);
   void Promise.resolve()
     .then(async () => {
       await closeServicesBeforeExit();
@@ -634,6 +641,7 @@ app.on('before-quit', (event) => {
       console.warn('[electron] before-quit 清理失败', error?.message || String(error));
     })
     .finally(() => {
+      clearTimeout(forceQuitTimer);
       quitAfterClose = true;
       app.quit();
     });

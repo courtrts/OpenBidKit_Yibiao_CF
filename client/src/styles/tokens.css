@@ -62,6 +62,44 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* 深色主题：覆盖颜色类变量（几何/动效/层级变量不变）。
+   语义色 -deep 档在深色下提亮以作文字色，-soft 档转为深色底，-border 档转深色描边。 */
+[data-theme='dark'] {
+  --yb-primary: #4098fc;
+  --yb-primary-hover: #66b1ff;
+  --yb-primary-deep: #2b7de0;
+  --yb-violet: #8b85e8;
+  --yb-bg: #0f1420;
+  --yb-surface: #171d2b;
+  --yb-border: #2a3245;
+  --yb-border-soft: #222a3b;
+  --yb-text: #e8ecf4;
+  --yb-text-soft: #a6b0c2;
+  --yb-text-muted: #6d7890;
+
+  --yb-success: #34c26e;
+  --yb-success-deep: #62d692;
+  --yb-success-soft: #10251a;
+  --yb-success-border: #1e4630;
+  --yb-warning: #f2a93b;
+  --yb-warning-deep: #f6c26d;
+  --yb-warning-soft: #2a2010;
+  --yb-warning-border: #4d3a17;
+  --yb-danger: #ef5b47;
+  --yb-danger-deep: #f58a7b;
+  --yb-danger-soft: #2b1512;
+  --yb-danger-border: #55241d;
+
+  --yb-shadow-xs: 0 2px 8px rgba(0, 0, 0, 0.3);
+  --yb-shadow-sm: 0 8px 20px rgba(0, 0, 0, 0.35);
+  --yb-shadow: 0 18px 40px rgba(0, 0, 0, 0.4);
+  --yb-shadow-lg: 0 30px 64px rgba(0, 0, 0, 0.5), 0 10px 26px rgba(0, 0, 0, 0.35);
+  --yb-shadow-hover: 0 22px 46px rgba(0, 0, 0, 0.55), 0 8px 18px rgba(0, 0, 0, 0.4);
+  --yb-shadow-modal: 0 28px 72px rgba(0, 0, 0, 0.6);
+
+  --yb-focus-ring: 0 0 0 3px rgba(64, 152, 252, 0.35);
+}
+
 * {
   box-sizing: border-box;
 }

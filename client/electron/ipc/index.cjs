@@ -1,4 +1,4 @@
-const { clipboard, dialog, ipcMain, shell } = require('electron');
+const { clipboard, dialog, ipcMain, nativeTheme, shell } = require('electron');
 const { registerAgentIpc } = require('./agentIpc.cjs');
 const { registerAiIpc } = require('./aiIpc.cjs');
 const { registerAutoConfirmationIpc } = require('./autoConfirmationIpc.cjs');
@@ -434,6 +434,12 @@ function registerIpcHandlers({ app, mainWindow, checkAndDownloadUpdate, triggerU
   ipcMain.handle('ui:set-current-view', (event, view) => {
     applyUiCurrentView(view, event.sender);
     return { success: true };
+  });
+  // 主题同步：渲染进程切换主题后同步 Electron 原生标题栏/系统控件配色。
+  ipcMain.handle('ui:set-native-theme', (event, mode) => {
+    const themeMode = mode === 'dark' || mode === 'system' ? mode : 'light';
+    nativeTheme.themeSource = themeMode;
+    return { success: true, mode: themeMode };
   });
   registerPendingWorkspaceDatabaseIpc(databaseStatus.getStatus);
 

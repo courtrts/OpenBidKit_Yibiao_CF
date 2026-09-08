@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { trackConfigUsage } from '../../../shared/analytics/analytics';
 import { AppSwitch, DetailHelpLink, FloatingToolbar, InlineSpinner, InputWithAction, OfflineLicenseActivationDialog, useAutoAnswer, useToast } from '../../../shared/ui';
 import { showUpdateReadyToast } from '../../../shared/updateToast';
+import { applyThemeMode, isThemeMode, type ThemeMode } from '../../../app/theme';
 import type { FloatingToolbarGroup } from '../../../shared/ui';
 import type { AgentModeScenariosConfig, AgentSelfCheckResult, AgentSelfCheckStepStatus, AiRequestMode, ClientConfig, ComponentsConfig, FileParserProvider, ImageModelConfig, ImageModelProfiles, ImageModelProvider, ImageModelRatio, ImageModelSize, ImageModelStatus, LicenseRuntimeStatus, TextModelConfig, TextModelProfiles, TextModelProvider, UpdateChannel } from '../../../shared/types';
 import type { SettingsPageState } from '../types';
@@ -609,6 +610,7 @@ const initialState: SettingsPageState = {
     update_channel: 'atomgit',
     gpu_hardware_acceleration_enabled: true,
     gpu_hardware_acceleration_configured: true,
+    theme_mode: 'light',
   },
 };
 
@@ -712,6 +714,7 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
           update_channel: normalizeUpdateChannel(config.update_channel),
           gpu_hardware_acceleration_enabled: Boolean(config.gpu_hardware_acceleration_enabled),
           gpu_hardware_acceleration_configured: Boolean(config.gpu_hardware_acceleration_configured),
+          theme_mode: isThemeMode(config.theme_mode) ? config.theme_mode : 'light',
         },
       }));
       setAgentAutoAnswerDraft(Boolean(config.agent_auto_answer_enabled));
@@ -763,6 +766,7 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
       ...(options.includeAgentSettings
         ? { agent_auto_answer_enabled: agentAutoAnswerDraft }
         : savedConfig ? { agent_auto_answer_enabled: Boolean(savedConfig.agent_auto_answer_enabled) } : {}),
+      theme_mode: state.general.theme_mode,
       update_channel: state.general.update_channel,
       gpu_hardware_acceleration_enabled: state.general.gpu_hardware_acceleration_enabled,
       gpu_hardware_acceleration_configured: state.general.gpu_hardware_acceleration_configured,
@@ -911,6 +915,15 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
       ...prev,
       general: { ...prev.general, update_channel: updateChannel },
     }));
+  };
+
+  const updateThemeMode = (themeMode: ThemeMode) => {
+    setState((prev) => ({
+      ...prev,
+      general: { ...prev.general, theme_mode: themeMode },
+    }));
+    // 主题切换即时预览（保存前即生效，便于用户对比效果）
+    applyThemeMode(themeMode);
   };
 
   const updateGpuHardwareAcceleration = (enabled: boolean) => {
@@ -1396,6 +1409,7 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
         update_channel: state.general.update_channel,
         gpu_hardware_acceleration_enabled: Boolean(state.general.gpu_hardware_acceleration_enabled),
         gpu_hardware_acceleration_configured: Boolean(state.general.gpu_hardware_acceleration_configured),
+        theme_mode: state.general.theme_mode,
       }) !== JSON.stringify({
         developer_mode: Boolean(savedConfig.developer_mode),
         developer_token_stats_auto_open: Boolean(savedConfig.developer_token_stats_auto_open),
@@ -1403,6 +1417,7 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
         update_channel: normalizeUpdateChannel(savedConfig.update_channel),
         gpu_hardware_acceleration_enabled: Boolean(savedConfig.gpu_hardware_acceleration_enabled),
         gpu_hardware_acceleration_configured: Boolean(savedConfig.gpu_hardware_acceleration_configured),
+        theme_mode: isThemeMode(savedConfig.theme_mode) ? savedConfig.theme_mode : 'light',
       });
     }
 
@@ -1612,15 +1627,20 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
                 <option value="zh-CN">简体中文</option>
               </select>
             </div>
-            <div className="settings-row">
+            <label className="settings-row">
               <div className="settings-row-copy">
                 <strong>应用主题</strong>
-                <span>切换深色或浅色模式</span>
+                <span>切换深色、浅色或跟随系统配色，切换后立即预览，保存后长期生效</span>
               </div>
-              <select value="system" disabled>
+              <select
+                value={state.general.theme_mode}
+                onChange={(event) => updateThemeMode(event.target.value as ThemeMode)}
+              >
                 <option value="system">跟随系统</option>
+                <option value="light">浅色模式</option>
+                <option value="dark">深色模式</option>
               </select>
-            </div>
+            </label>
             <div className="settings-row">
               <div className="settings-row-copy">
                 <strong>侧边栏布局</strong>

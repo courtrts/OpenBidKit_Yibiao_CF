@@ -63,6 +63,7 @@ const bridge = {
   },
   ui: {
     setCurrentView: (view) => ipcRenderer.invoke('ui:set-current-view', view),
+    setNativeTheme: (mode) => ipcRenderer.invoke('ui:set-native-theme', mode),
   },
   config: {
     load: () => ipcRenderer.invoke('config:load'),

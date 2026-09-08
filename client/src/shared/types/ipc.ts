@@ -569,6 +569,7 @@ export interface YibiaoBridge {
   };
   ui: {
     setCurrentView: (view: { section: string; step?: string | null }) => Promise<{ success: boolean }>;
+    setNativeTheme: (mode: 'light' | 'dark' | 'system') => Promise<{ success: boolean; mode: 'light' | 'dark' | 'system' }>;
   };
   config: {
     load: () => Promise<ClientConfig>;

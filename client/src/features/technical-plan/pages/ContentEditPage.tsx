@@ -208,6 +208,14 @@ function getLeafStatus(item: OutlineItem, sections: ContentGenerationSections): 
   return item.content_mode === 'ai-generate' ? 'idle' : 'pending';
 }
 
+function collectLeafNodesWithDepth(items: OutlineItem[], depth: number): Array<{ item: OutlineItem; depth: number }> {
+  return items.flatMap((item) =>
+    item.children?.length
+      ? collectLeafNodesWithDepth(item.children, depth + 1)
+      : [{ item, depth }],
+  );
+}
+
 function getTreeStatus(item: OutlineItem, sections: ContentGenerationSections): TreeStatus {
   if (!item.children?.length) {
     return getLeafStatus(item, sections);
@@ -301,6 +309,10 @@ function ContentEditPage({
   const isExpansionWorkflow = workflowKind === 'existing-plan-expansion';
   const allLeaves = useMemo(() => outlineData?.outline ? collectLeafItems(outlineData.outline) : [], [outlineData]);
   const leaves = useMemo(() => allLeaves.filter((item) => item.content_mode === 'ai-generate'), [allLeaves]);
+  const allLeafNodes = useMemo(
+    () => (outlineData?.outline ? collectLeafNodesWithDepth(outlineData.outline, 0) : []),
+    [outlineData],
+  );
   const [selectedItemId, setSelectedItemId] = useState('');
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [isPreviewing, setIsPreviewing] = useState(false);
@@ -926,6 +938,50 @@ function ContentEditPage({
     }
   };
 
+  const copySelectedSection = async () => {
+    if (!selectedItem || !selectedIsLeaf) {
+      return;
+    }
+
+    const body = (editing ? draftContent : selectedContent).trim();
+    if (!body) {
+      showToast('该小节暂无可复制的正文内容', 'info');
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(`${selectedItem.title}\n\n${body}`);
+      showToast('已复制本节内容（含标题）', 'success');
+    } catch {
+      showToast('复制本节内容失败，请检查剪贴板权限', 'error');
+    }
+  };
+
+  const copyAllSections = async () => {
+    const blocks = allLeafNodes
+      .map(({ item, depth }) => {
+        const content = getLeafContent(item, sections).trim();
+        if (!content) {
+          return '';
+        }
+        const heading = '#'.repeat(Math.min(depth + 1, 6));
+        return `${heading} ${item.title}\n\n${content}`;
+      })
+      .filter(Boolean);
+
+    if (!blocks.length) {
+      showToast('暂无可复制的正文内容', 'info');
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(blocks.join('\n\n'));
+      showToast(`已复制全部 ${blocks.length} 个小节正文`, 'success');
+    } catch {
+      showToast('复制全文失败，请检查剪贴板权限', 'error');
+    }
+  };
+
   const startEditingContent = () => {
     if (taskBlocksGeneration) {
       showToast('请先完成当前正文生成任务，再编辑正文', 'info');
@@ -1119,8 +1175,11 @@ function ContentEditPage({
       <section className="content-generation-workspace">
         <aside className="content-outline-panel">
           <div className="analysis-result-head">
-            <strong>标书目录</strong>
-            <span>{leaves.length} 个小节</span>
+            <div className="analysis-result-head-main">
+              <strong>标书目录</strong>
+              <span>{leaves.length} 个小节</span>
+            </div>
+            <button type="button" className="secondary-action" onClick={() => void copyAllSections()} disabled={!allLeafNodes.length}>复制全文</button>
           </div>
           <div className={`content-outline-stats${statsCollapsed ? ' is-collapsed' : ''}`}>
             <button type="button" onClick={() => setStatsCollapsed((prev) => !prev)} aria-expanded={!statsCollapsed}>
@@ -1150,6 +1209,7 @@ function ContentEditPage({
             </div>
             <div className="content-reader-actions">
               <span className={`content-status-badge is-${selectedStatus}`}>{statusLabels[selectedStatus]}</span>
+              <button type="button" className="secondary-action" onClick={() => void copySelectedSection()} disabled={!selectedItem || !selectedIsLeaf}>复制本节</button>
               {editing ? (
                 <>
                   <button type="button" className={isPreviewing ? 'secondary-action' : 'primary-action'} onClick={togglePreview}>

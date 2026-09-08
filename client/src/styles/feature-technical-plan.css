@@ -171,6 +171,13 @@
   font-size: 13px;
 }
 
+.analysis-result-head-main {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
 .analysis-result-card textarea {
   width: 100%;
   min-height: 380px;

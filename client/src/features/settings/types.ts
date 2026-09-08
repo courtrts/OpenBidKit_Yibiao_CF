@@ -1,3 +1,4 @@
+import type { ThemeMode } from '../../app/theme';
 import type { AgentModeScenariosConfig, ComponentsConfig, ImageModelConfig, ImageModelProfiles, TextModelConfig, TextModelProfiles, TextModelProvider, UpdateChannel } from '../../shared/types';
 
 export interface SettingsPageState {
@@ -23,5 +24,6 @@ export interface SettingsPageState {
     update_channel: UpdateChannel;
     gpu_hardware_acceleration_enabled: boolean;
     gpu_hardware_acceleration_configured: boolean;
+    theme_mode: ThemeMode;
   };
 }

@@ -182,7 +182,8 @@ function parseAgentRuntimeMetricKey(value) {
 }
 
 function businessDateCondition(activityDate) {
-  return `${businessDateSqlExpression()} = ${sqlString(activityDate)}`;
+  // 单日等值改写为范围条件：附带原生 timestamp 边界（见 utils.businessDateUtcBoundsCondition）
+  return businessDateRangeCondition(activityDate, activityDate);
 }
 
 function aeRangeCondition(range) {
@@ -2494,6 +2495,11 @@ export async function backfillClientActivityWindow(env, projectName, startDate, 
 }
 
 async function queryHistoricalResourceClickRows(env, activityDate, projectNames) {
+  // 点击数是全历史累计语义（覆盖写回资源库），保留无下界上限条件；
+  // 但 AE 事件保留期即 90 天（与 latest.js 的 90 天窗口同一假设），
+  // 叠加一个保留期下界不改变结果，却让每次重算的 AE 扫描真正收敛。
+  const retentionLowerMs = Date.parse(`${getBusinessDateDaysAgo(90)}T00:00:00Z`) - 8 * 3600000;
+  const retentionLowerUtc = new Date(retentionLowerMs).toISOString().replace('T', ' ').slice(0, 19);
   const result = await queryAnalytics(env, `
     SELECT blob9 AS resourceKey, SUM(_sample_interval) AS clickCount
     FROM ${DATASET}
@@ -2501,6 +2507,7 @@ async function queryHistoricalResourceClickRows(env, activityDate, projectNames)
       AND blob2 = 'resource_click'
       AND blob9 != ''
       AND ${businessDateSqlExpression()} <= ${sqlString(activityDate)}
+      AND timestamp >= toDateTime(${sqlString(retentionLowerUtc)}, 'UTC')
     GROUP BY resourceKey
     ORDER BY resourceKey ASC
     LIMIT ${MAX_ANALYTICS_ROWS}

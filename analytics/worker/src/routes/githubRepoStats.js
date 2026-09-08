@@ -170,7 +170,10 @@ async function fetchRepoStatsFromApi(env, ctx) {
   }, 10000);
 
   if (!response.ok) {
-    throw new Error(`GitHub API ${response.status}: ${await response.text()}`);
+    // 上游响应体可能含限流主体/仓库内部信息，只保留状态码入错误，
+    // 完整 body 经 logQueryError 写日志（见 catch 处）。
+    console.error('[analytics] github api non-ok', response.status, (await response.text()).slice(0, 300));
+    throw new Error(`GitHub API ${response.status}`);
   }
 
   return normalizeRepoStats(await response.json(), ctx);

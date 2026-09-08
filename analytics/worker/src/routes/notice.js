@@ -10,7 +10,7 @@ import {
   saveStoredNotice,
   writeLatestNotice,
 } from '../services/noticeStore.js';
-import { isValidProjectName, normalizeText } from '../utils.js';
+import { getRequestClientIp, isValidProjectName, normalizeText, shouldSkipDuplicateWrite } from '../utils.js';
 
 export async function handlePublicNotice(request, env, url) {
   if (request.method !== 'GET') {
@@ -55,6 +55,11 @@ export async function handlePublicNoticeDelivered(request, env) {
   const noticeId = normalizeText(body.noticeId || body.notice_id, 80);
   if (!isValidProjectName(projectName) || !noticeId) {
     return json({ code: 400, message: 'invalid projectName or noticeId' }, { status: 400 });
+  }
+
+  // 同一出口 IP 对同一公告的重复送达 60s 内只计一次，防公开端点被刷计数/写配额
+  if (shouldSkipDuplicateWrite(`notice-delivered:${getRequestClientIp(request)}|${projectName}/${noticeId}`)) {
+    return json({ code: 0 }, { headers: { 'Cache-Control': 'no-store' } });
   }
 
   try {

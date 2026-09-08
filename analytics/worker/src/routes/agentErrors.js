@@ -53,9 +53,10 @@ export async function handleAgentErrorIngest(request, env, url) {
     return json({ code: 400, message: 'invalid content type' }, { status: 400 });
   }
 
-  // 声明长度与实际长度不一致时直接拒绝，避免“报小实际大”的 body 被全量读入内存
+  // 声明长度与实际长度不一致（或缺失 Content-Length，无法廉价预检）时直接拒绝，
+  // 避免”报小实际大”的 body 被全量读入内存后才在字节校验处失败
   const declaredLength = Number(request.headers.get('Content-Length') || '');
-  if (Number.isFinite(declaredLength) && declaredLength > 0 && declaredLength !== meta.compressedBytes) {
+  if (!Number.isFinite(declaredLength) || declaredLength <= 0 || declaredLength !== meta.compressedBytes) {
     return json({ code: 400, message: 'invalid content length' }, { status: 400 });
   }
 

@@ -9,7 +9,7 @@ import {
   syncAllPlugins,
   upsertPlugin,
 } from '../services/pluginStore.js';
-import { normalizeText } from '../utils.js';
+import { getRequestClientIp, normalizeText, shouldSkipDuplicateWrite } from '../utils.js';
 
 export async function handlePublicPlugins(request, env, url) {
   if (request.method !== 'GET') {
@@ -44,6 +44,11 @@ export async function handlePublicPluginDownload(request, env) {
   const id = normalizeText(body.id, 80);
   if (!id) {
     return json({ code: 400, message: 'missing id' }, { status: 400 });
+  }
+
+  // 同一出口 IP 对同一插件的重复上报 60s 内只计一次，防公开端点被刷计数/写配额
+  if (shouldSkipDuplicateWrite(`plugin-download:${getRequestClientIp(request)}|${id}`)) {
+    return json({ code: 0 });
   }
 
   try {

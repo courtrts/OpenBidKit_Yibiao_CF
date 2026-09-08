@@ -140,13 +140,48 @@ export function businessDateTimeSqlExpression(value = 'timestamp') {
   return `formatDateTime(${value}, '%Y-%m-%d %H:%i:%S', '${BUSINESS_TIME_ZONE}')`;
 }
 
+// 北京时间（UTC+8，无夏令时）业务日 → 原生 timestamp 边界（UTC 墙钟串交给
+// toDateTime(..., 'UTC') 解析）。业务日 D 的范围是 [D-1 16:00, D+1 16:00) UTC。
+// 对 formatDateTime 计算列的比较无法触发 AE 分区裁剪，原生边界让扫描真正收敛；
+// 语义与计算列条件完全等价（叠加使用是收紧不是改变）。
+export function businessDateUtcBoundsCondition(startDate, endDate) {
+  const startMs = Date.parse(`${datePart(startDate)}T00:00:00Z`);
+  const endMs = Date.parse(`${datePart(endDate)}T00:00:00Z`);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return '';
+  const lower = new Date(startMs - 8 * 3600000).toISOString().replace('T', ' ').slice(0, 19);
+  const upper = new Date(endMs + 16 * 3600000).toISOString().replace('T', ' ').slice(0, 19);
+  return `timestamp >= toDateTime(${sqlString(lower)}, 'UTC') AND timestamp < toDateTime(${sqlString(upper)}, 'UTC')`;
+}
+
 export function businessDateRangeCondition(startDate, endDate = getBusinessToday()) {
   const dateExpr = businessDateSqlExpression();
-  return `${dateExpr} >= ${sqlString(startDate)} AND ${dateExpr} <= ${sqlString(endDate)}`;
+  const nativeBounds = businessDateUtcBoundsCondition(startDate, endDate);
+  const nativeCondition = nativeBounds ? ` AND ${nativeBounds}` : '';
+  return `${dateExpr} >= ${sqlString(startDate)} AND ${dateExpr} <= ${sqlString(endDate)}${nativeCondition}`;
 }
 
 export function logQueryError(scope, error) {
   console.error(`[analytics] ${scope} query failed`, error?.message || String(error));
+}
+
+// 公开计数端点的进程内去重：同键 60s 内重复提交只写一次 D1。
+// 免费档 D1 写配额有限，无鉴权写端点被脚本刷计数会拖累 /track 与汇总链路；
+// isolate 级去重不跨实例，但已把单实例内的重复写压掉绝大部分。
+const RECENT_WRITE_TTL_MS = 60000;
+const RECENT_WRITE_MAX_KEYS = 512;
+const recentWriteKeys = new Map();
+
+export function shouldSkipDuplicateWrite(key) {
+  const now = Date.now();
+  const last = recentWriteKeys.get(key);
+  if (last !== undefined && now - last < RECENT_WRITE_TTL_MS) return true;
+  recentWriteKeys.set(key, now);
+  if (recentWriteKeys.size > RECENT_WRITE_MAX_KEYS) {
+    for (const [mapKey, at] of recentWriteKeys) {
+      if (now - at >= RECENT_WRITE_TTL_MS) recentWriteKeys.delete(mapKey);
+    }
+  }
+  return false;
 }
 
 export function sqlString(value) {

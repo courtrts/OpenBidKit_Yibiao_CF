@@ -181,7 +181,12 @@ function MarkdownRenderer({
       }
 
       if (tag === 'img') {
-        const src = element.getAttribute('src') || '';
+        const rawSrc = element.getAttribute('src') || '';
+        // src 协议约束：外部内容只允许 http(s)/data 图片与相对路径，
+        // 拦掉 file:（探测本地文件）、javascript: 等可疑协议
+        const src = /^(https?:\/\/|data:image\/|blob:|\/|#)/i.test(rawSrc) || !/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(rawSrc)
+          ? rawSrc
+          : '';
         const alt = element.getAttribute('alt') || '正文图片';
         const mergedClassName = [className, imageClassName].filter(Boolean).join(' ') || undefined;
         const previewEnabled = imageMode === 'preview' && Boolean(src) && Boolean(onPreviewImage);

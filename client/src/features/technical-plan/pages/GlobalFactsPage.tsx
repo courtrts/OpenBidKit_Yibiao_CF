@@ -1,6 +1,6 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import { useEffect, useMemo, useState } from 'react';
-import { MarkdownEditor, MarkdownFullscreenViewer, MarkdownRenderer, ProgressBar, useToast } from '../../../shared/ui';
+import { AppDialog, MarkdownEditor, MarkdownFullscreenViewer, MarkdownRenderer, ProgressBar, useToast } from '../../../shared/ui';
 import type { OutlineData } from '../../../shared/types';
 import type { BackgroundTaskState, GlobalFactGroupState, GlobalFactsMode } from '../types';
 
@@ -74,6 +74,7 @@ function GlobalFactsPage({
 }: GlobalFactsPageProps) {
   const { showToast } = useToast();
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(globalFacts[0]?.id || null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
   const [draftTitle, setDraftTitle] = useState('');
   const [draftContent, setDraftContent] = useState('');
   const [starting, setStarting] = useState(false);
@@ -228,9 +229,19 @@ function GlobalFactsPage({
     setSelectedGroupId(nextGroup.id);
   };
 
-  const deleteActiveGroup = async () => {
-    if (!activeGroup) return;
-    await saveFacts(globalFacts.filter((group) => group.id !== activeGroup.id), '已删除事实大项');
+  const deleteActiveGroup = () => {
+    if (!activeGroup || mutationLocked || saving) return;
+    // 删除的是 AI 生成/人工核对过的事实大项且不可恢复，与其他页面删除确认约定一致
+    setDeleteTarget({ id: activeGroup.id, title: activeGroup.title || '未命名事实大项' });
+  };
+
+  const confirmDeleteGroup = async () => {
+    if (!deleteTarget) return;
+    try {
+      await saveFacts(globalFacts.filter((group) => group.id !== deleteTarget.id), '已删除事实大项');
+    } finally {
+      setDeleteTarget(null);
+    }
   };
 
   const copyActiveGroup = async () => {
@@ -422,6 +433,20 @@ function GlobalFactsPage({
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
+
+      <AppDialog
+        open={Boolean(deleteTarget)}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        kicker="删除事实大项"
+        title={`确认删除“${deleteTarget?.title || ''}”`}
+        description="该事实大项（含全部编辑内容）删除后不可恢复；如为误删，可重新生成或手动补录。"
+        actions={(
+          <>
+            <button type="button" className="secondary-action" onClick={() => setDeleteTarget(null)}>取消</button>
+            <button type="button" className="danger-action" onClick={() => { void confirmDeleteGroup(); }}>确认删除</button>
+          </>
+        )}
+      />
     </div>
   );
 }

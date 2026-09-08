@@ -5,6 +5,7 @@ import {
   MODEL_INFO_CACHE_STATUS_KEY,
   MODEL_INFO_SOURCE_URL_KEY,
 } from '../constants.js';
+import { fetchWithTimeout } from '../utils.js';
 
 const CACHE_VERSION = 3;
 const REASONING_EFFORT_ORDER = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
@@ -399,13 +400,13 @@ export async function syncModelInfoCache(env, trigger = 'manual') {
   const attemptedAt = new Date().toISOString();
   const previousStatus = await readModelInfoCacheStatus(env);
   try {
-    const response = await fetch(sourceUrl, {
+    const response = await fetchWithTimeout(sourceUrl, {
       headers: {
         Accept: 'application/json',
         'User-Agent': 'OpenBidKit-Yibiao-Analytics',
       },
       cache: 'no-store',
-    });
+    }, 30000);
     if (!response.ok) {
       throw new Error(`models.dev API ${response.status}: ${(await response.text()).slice(0, 300)}`);
     }

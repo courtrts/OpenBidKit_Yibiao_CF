@@ -1,4 +1,4 @@
-import { formatNoticeTime, normalizeText } from '../utils.js';
+import { fetchWithTimeout, formatNoticeTime, normalizeText } from '../utils.js';
 
 const PLUGIN_ID_MAX_LENGTH = 80;
 const PLUGIN_NAME_MAX_LENGTH = 120;
@@ -227,10 +227,10 @@ async function fetchGitHubJson(env, url, resourceName) {
   for (let attempt = 1; attempt <= GITHUB_REQUEST_MAX_ATTEMPTS; attempt += 1) {
     let response;
     try {
-      response = await fetch(url, {
+      response = await fetchWithTimeout(url, {
         headers: buildGitHubHeaders(env),
         cache: 'no-store',
-      });
+      }, 15000);
     } catch (error) {
       lastError = createPluginError(`无法连接 GitHub 读取${resourceName}：${error?.message || String(error)}`, 502);
       if (attempt < GITHUB_REQUEST_MAX_ATTEMPTS) {
@@ -271,11 +271,11 @@ async function fetchGitHubPluginPackage(url) {
   for (let attempt = 1; attempt <= GITHUB_REQUEST_MAX_ATTEMPTS; attempt += 1) {
     let response;
     try {
-      response = await fetch(url, {
+      response = await fetchWithTimeout(url, {
         headers: { 'User-Agent': 'OpenBidKit-Yibiao-Plugin-Market' },
         redirect: 'follow',
         cache: 'no-store',
-      });
+      }, 30000);
     } catch (error) {
       lastError = createPluginError(`无法下载 GitHub 插件安装包：${error?.message || String(error)}`, 502);
       if (attempt < GITHUB_REQUEST_MAX_ATTEMPTS) {

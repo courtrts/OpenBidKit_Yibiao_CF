@@ -5,6 +5,7 @@ import {
   githubRepoStatsCacheKey,
 } from '../constants.js';
 import { json, methodNotAllowed, requireAdmin, unauthorized } from '../http.js';
+import { fetchWithTimeout } from '../utils.js';
 
 // 解析部署仓库标识：环境变量 GITHUB_REPO_FULL_NAME（"owner/repo"）优先，默认原项目仓库。
 function resolveRepoContext(env) {
@@ -164,9 +165,9 @@ async function writeCachedStats(env, repo, ctx) {
 }
 
 async function fetchRepoStatsFromApi(env, ctx) {
-  const response = await fetch(`https://api.github.com/repos/${ctx.fullName}`, {
+  const response = await fetchWithTimeout(`https://api.github.com/repos/${ctx.fullName}`, {
     headers: buildGitHubHeaders(env),
-  });
+  }, 10000);
 
   if (!response.ok) {
     throw new Error(`GitHub API ${response.status}: ${await response.text()}`);
@@ -176,12 +177,12 @@ async function fetchRepoStatsFromApi(env, ctx) {
 }
 
 async function fetchRepoStatsFromHtml(ctx) {
-  const response = await fetch(ctx.htmlUrl, {
+  const response = await fetchWithTimeout(ctx.htmlUrl, {
     headers: {
       Accept: 'text/html',
       'User-Agent': 'OpenBidKit-Yibiao-Analytics',
     },
-  });
+  }, 10000);
 
   if (!response.ok) {
     throw new Error(`GitHub HTML ${response.status}: ${await response.text()}`);

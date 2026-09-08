@@ -1,3 +1,5 @@
+import { fetchWithTimeout } from '../utils.js';
+
 const retryableStatuses = new Set([429, 500, 502, 503, 504]);
 
 function sleep(ms) {
@@ -16,13 +18,13 @@ export async function queryAnalytics(env, sql) {
   const api = `https://api.cloudflare.com/client/v4/accounts/${env.ACCOUNT_ID}/analytics_engine/sql`;
 
   for (let attempt = 1; attempt <= 4; attempt += 1) {
-    const response = await fetch(api, {
+    const response = await fetchWithTimeout(api, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${env.ANALYTICS_API_TOKEN}`,
       },
       body: sql,
-    });
+    }, 8000);
     const text = await response.text();
 
     if (response.ok) {

@@ -152,6 +152,19 @@ export function sqlString(value) {
   return `'${String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
 }
 
+// 统一 fetch 超时：Analytics Engine / models.dev / GitHub 等外部请求没有超时时
+// 可能无限挂起，占满调用墙钟预算且无日志。超时经 AbortController 中断后按普通
+// 错误抛出（fetch 抛 AbortError），由调用方既有的重试/错误处理链路接管。
+export async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export function formatNoticeTime(date = new Date()) {
   const parts = new Intl.DateTimeFormat('zh-CN', {
     timeZone: BUSINESS_TIME_ZONE,

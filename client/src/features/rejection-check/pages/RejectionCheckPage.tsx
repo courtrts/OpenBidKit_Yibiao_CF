@@ -437,7 +437,27 @@ function TypoOriginalBlock({ excerpt, wrongText }: { excerpt: string; wrongText:
   );
 }
 
+function serializeRejectionFinding(finding: RejectionCheckFinding, bidLabel: string) {
+  return [
+    `【${findingSeverityLabels[finding.severity]}·${findingTypeLabels[finding.type]}】${finding.title}（${bidLabel}）`,
+    finding.summary,
+    `检查依据：${finding.requirement}`,
+    `投标文件证据：${finding.bidEvidence}`,
+    `风险原因：${finding.riskReason}`,
+    finding.suggestion ? `修改建议：${finding.suggestion}` : '',
+  ].filter(Boolean).join('\n');
+}
+
 function RejectionFindingItem({ finding, bidLabel, expanded, onToggle, onDelete }: { finding: RejectionCheckFinding; bidLabel: string; expanded: boolean; onToggle: () => void; onDelete: () => void }) {
+  const { showToast } = useToast();
+  const copyFinding = async () => {
+    try {
+      await navigator.clipboard.writeText(serializeRejectionFinding(finding, bidLabel));
+      showToast('该风险项已复制，可直接粘贴发给同事', 'success');
+    } catch {
+      showToast('复制失败，请检查剪贴板权限', 'error');
+    }
+  };
   return (
     <article className={`rejection-finding-item is-${finding.type} is-${finding.severity}${expanded ? ' is-expanded' : ''}`}>
       <div className="rejection-finding-row">
@@ -457,6 +477,9 @@ function RejectionFindingItem({ finding, bidLabel, expanded, onToggle, onDelete 
             </span>
             <small>{finding.summary}</small>
           </span>
+        </button>
+        <button type="button" className="rejection-finding-copy" onClick={() => { void copyFinding(); }} aria-label={`复制${finding.title}`}>
+          复制
         </button>
         <button type="button" className="rejection-finding-delete" onClick={onDelete} aria-label={`删除${finding.title}`}>
           删除
@@ -523,6 +546,21 @@ function TypoFindingItem({ finding, bidLabel, expanded, onToggle, onDelete, onCo
 }
 
 function LogicFindingItem({ finding, bidLabel, expanded, onToggle, onDelete }: { finding: LogicCheckFinding; bidLabel: string; expanded: boolean; onToggle: () => void; onDelete: () => void }) {
+  const { showToast } = useToast();
+  const copyFinding = async () => {
+    try {
+      await navigator.clipboard.writeText([
+        `【逻辑谬误】${finding.title}（${bidLabel}）`,
+        `原文与位置：${finding.locationHint}`,
+        finding.originalText,
+        `谬误原因：${finding.fallacyReason}`,
+        finding.suggestion ? `修改建议：${finding.suggestion}` : '',
+      ].filter(Boolean).join('\n'));
+      showToast('该逻辑谬误已复制', 'success');
+    } catch {
+      showToast('复制失败，请检查剪贴板权限', 'error');
+    }
+  };
   return (
     <article className={`rejection-finding-item is-logic${expanded ? ' is-expanded' : ''}`}>
       <div className="rejection-finding-row">
@@ -541,6 +579,9 @@ function LogicFindingItem({ finding, bidLabel, expanded, onToggle, onDelete }: {
             </span>
             <small>{finding.locationHint}</small>
           </span>
+        </button>
+        <button type="button" className="rejection-finding-copy" onClick={() => { void copyFinding(); }} aria-label={`复制${finding.title}`}>
+          复制
         </button>
         <button type="button" className="rejection-finding-delete" onClick={onDelete} aria-label={`删除${finding.title}`}>
           删除

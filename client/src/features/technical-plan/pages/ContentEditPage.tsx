@@ -623,6 +623,9 @@ function ContentEditPage({
               : completedCount > 0
                 ? '继续生成正文'
                 : '生成正文';
+  const willOverwriteAllSections = generationDialogOpen
+    && leaves.length > 0
+    && resolvedCount === leaves.length;
   const editing = Boolean(selectedItem && selectedIsLeaf && editingItemId === selectedItem.id);
   const imageModelAvailable = imageModelStatus === 'available';
 
@@ -1374,7 +1377,12 @@ function ContentEditPage({
           <Dialog.Overlay className="content-regenerate-modal" />
           <Dialog.Content className="content-generation-config-card" aria-describedby={undefined}>
             <div className="content-regenerate-card-head">
-              <Dialog.Title>正文生成配置</Dialog.Title>
+              <Dialog.Title>{willOverwriteAllSections ? '重新生成正文（将覆盖现有内容）' : '正文生成配置'}</Dialog.Title>
+              {willOverwriteAllSections && (
+                <Dialog.Description className="content-regenerate-warning">
+                  当前全部 {leaves.length} 个小节已生成正文，重新生成将覆盖现有内容（含手动润色的修改，暂存草稿仍可恢复）。请确认不再需要现有正文。
+                </Dialog.Description>
+              )}
             </div>
             <div className="content-generation-config-list">
               <div className="content-generation-config-group">
@@ -1578,7 +1586,7 @@ function ContentEditPage({
                   以随机失败模式开始
                 </button>
               )}
-              {!paused && <button type="button" className="primary-action" onClick={() => void startGeneration(false)} disabled={taskBlocksGeneration}>开始生成</button>}
+              {!paused && <button type="button" className="primary-action" onClick={() => void startGeneration(false)} disabled={taskBlocksGeneration}>{willOverwriteAllSections ? '重新生成并覆盖全部正文' : '开始生成'}</button>}
             </div>
           </Dialog.Content>
         </Dialog.Portal>

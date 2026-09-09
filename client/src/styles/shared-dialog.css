@@ -581,3 +581,8 @@
   overflow-wrap: anywhere;
   user-select: text;
 }
+
+/* 全文重新生成的覆盖警告描述 */
+.content-regenerate-warning {
+  color: var(--yb-danger);
+}

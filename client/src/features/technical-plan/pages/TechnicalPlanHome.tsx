@@ -1385,6 +1385,12 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
       {state.step === 'document-analysis' && (
         <DocumentAnalysisPage
           workflowKind={workflowKind}
+          hasDownstreamProgress={Boolean(
+            state.outlineData
+            || state.globalFacts.length > 0
+            || Object.keys(state.contentGenerationSections || {}).length > 0
+            || state.bidSections.length > 0,
+          )}
           tenderFile={state.tenderFile}
           tenderFiles={state.tenderFiles || []}
           tenderMarkdown={tenderMarkdown}

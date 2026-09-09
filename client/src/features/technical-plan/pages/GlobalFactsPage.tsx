@@ -74,6 +74,8 @@ function GlobalFactsPage({
 }: GlobalFactsPageProps) {
   const { showToast } = useToast();
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(globalFacts[0]?.id || null);
+  // 切换大项时的未保存修改拦截：dirty 时先弹三选确认，避免编辑内容被静默覆盖
+  const [pendingGroupId, setPendingGroupId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
   const [draftTitle, setDraftTitle] = useState('');
   const [draftContent, setDraftContent] = useState('');
@@ -229,6 +231,21 @@ function GlobalFactsPage({
     setSelectedGroupId(nextGroup.id);
   };
 
+  // dirty 时切换大项先确认：draft 会在 activeGroup 变化的 effect 中被覆盖
+  const selectGroup = (groupId: string) => {
+    if (groupId === selectedGroupId) return;
+    if (dirty) {
+      setPendingGroupId(groupId);
+      return;
+    }
+    setSelectedGroupId(groupId);
+  };
+
+  const discardPendingAndSelect = () => {
+    if (pendingGroupId) setSelectedGroupId(pendingGroupId);
+    setPendingGroupId(null);
+  };
+
   const deleteActiveGroup = () => {
     if (!activeGroup || mutationLocked || saving) return;
     // 删除的是 AI 生成/人工核对过的事实大项且不可恢复，与其他页面删除确认约定一致
@@ -315,7 +332,7 @@ function GlobalFactsPage({
                 type="button"
                 className={`global-facts-item${group.id === activeGroup?.id ? ' is-active' : ''}`}
                 key={group.id}
-                onClick={() => setSelectedGroupId(group.id)}
+                onClick={() => selectGroup(group.id)}
               >
                 <strong>{group.title}</strong>
                 <small>{group.content.length} 字{group.updated_at ? ` · ${formatUpdatedAt(group.updated_at)}` : ''}</small>
@@ -448,6 +465,33 @@ function GlobalFactsPage({
           <>
             <button type="button" className="secondary-action" onClick={() => setDeleteTarget(null)}>取消</button>
             <button type="button" className="danger-action" onClick={() => { void confirmDeleteGroup(); }}>确认删除</button>
+          </>
+        )}
+      />
+
+      <AppDialog
+        open={Boolean(pendingGroupId)}
+        onOpenChange={(open) => !open && setPendingGroupId(null)}
+        kicker="未保存的修改"
+        title="当前事实大项的修改还未保存"
+        description="切换到其他大项将丢弃这些修改。可先保存，或放弃修改继续切换。"
+        actions={(
+          <>
+            <button type="button" className="secondary-action" onClick={() => setPendingGroupId(null)}>继续编辑</button>
+            <button type="button" className="secondary-action" onClick={discardPendingAndSelect}>放弃修改并切换</button>
+            <button
+              type="button"
+              className="primary-action"
+              onClick={() => {
+                void (async () => {
+                  await saveActiveGroup();
+                  if (pendingGroupId) setSelectedGroupId(pendingGroupId);
+                  setPendingGroupId(null);
+                })();
+              }}
+            >
+              保存并切换
+            </button>
           </>
         )}
       />

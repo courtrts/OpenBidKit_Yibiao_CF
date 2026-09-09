@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { isLibreOfficeRequiredMessage, MarkdownFullscreenViewer, MarkdownRenderer, UploadBoard, UploadEmpty, UploadFilePill, UploadRow, useDocumentParseNotice, useToast } from '../../../shared/ui';
+import { AppDialog, isLibreOfficeRequiredMessage, MarkdownFullscreenViewer, MarkdownRenderer, UploadBoard, UploadEmpty, UploadFilePill, UploadRow, useDocumentParseNotice, useToast } from '../../../shared/ui';
 import type { FileParserProvider } from '../../../shared/types';
 import type { TechnicalPlanOriginalPlanFile, TechnicalPlanState, TechnicalPlanTenderFile, TechnicalPlanTenderSourceFile, TechnicalPlanWorkflowKind } from '../types';
 
@@ -42,6 +42,7 @@ interface DocumentAnalysisPageProps {
   tenderMarkdown: string;
   originalPlanFile: TechnicalPlanOriginalPlanFile | null;
   originalPlanMarkdown: string;
+  hasDownstreamProgress?: boolean;
   onFileImported: (state: TechnicalPlanState, markdown: string) => void;
   onOriginalPlanImported: (state: TechnicalPlanState, markdown: string) => void;
 }
@@ -53,6 +54,7 @@ function DocumentAnalysisPage({
   tenderMarkdown,
   originalPlanFile,
   originalPlanMarkdown,
+  hasDownstreamProgress = false,
   onFileImported,
   onOriginalPlanImported,
 }: DocumentAnalysisPageProps) {
@@ -135,7 +137,7 @@ function DocumentAnalysisPage({
   const resolveDroppedFilePaths = (files: FileList) =>
     Array.from(files).map((file) => window.yibiao?.file.getPathForFile(file) || '').filter(Boolean);
 
-  const importTenderDocument = async (filePaths?: string[]) => {
+  const runImportTenderDocument = async (filePaths?: string[]) => {
     try {
       setBusy('tender');
       const result = await window.yibiao?.technicalPlan.importTenderDocument(filePaths);
@@ -176,7 +178,7 @@ function DocumentAnalysisPage({
     }
   };
 
-  const removeTenderDocument = async (sourceId: string) => {
+  const runRemoveTenderDocument = async (sourceId: string) => {
     try {
       setBusy('tender');
       const result = await window.yibiao?.technicalPlan.removeTenderDocument(sourceId);
@@ -200,6 +202,28 @@ function DocumentAnalysisPage({
     } finally {
       setBusy(null);
     }
+  };
+
+  // 导入/移除招标文件会在主进程级联清空目录、全局事实与全部正文：
+  // 存在下游成果时先弹确认，避免"补传一份文件"静默蒸发数小时成果。
+  const [pendingCascade, setPendingCascade] = useState<{ label: string; run: () => Promise<void> } | null>(null);
+
+  const importTenderDocument = (filePaths?: string[]) => {
+    const run = () => runImportTenderDocument(filePaths);
+    if (hasDownstreamProgress) {
+      setPendingCascade({ label: '重新导入招标文件', run });
+      return;
+    }
+    void run();
+  };
+
+  const removeTenderDocument = (sourceId: string) => {
+    const run = () => runRemoveTenderDocument(sourceId);
+    if (hasDownstreamProgress) {
+      setPendingCascade({ label: '移除招标文件', run });
+      return;
+    }
+    void run();
   };
 
   const importOriginalPlanDocument = async (filePaths?: string[]) => {
@@ -379,6 +403,30 @@ function DocumentAnalysisPage({
           </div>
         )}
       </section>
+
+      <AppDialog
+        open={Boolean(pendingCascade)}
+        onOpenChange={(open) => !open && setPendingCascade(null)}
+        kicker="下游成果将被清空"
+        title={`确认${pendingCascade?.label || '该操作'}？`}
+        description="此操作会清空基于当前招标内容已生成的目录、全局事实与全部正文，且不可恢复。"
+        actions={(
+          <>
+            <button type="button" className="secondary-action" onClick={() => setPendingCascade(null)}>取消</button>
+            <button
+              type="button"
+              className="danger-action"
+              onClick={() => {
+                const run = pendingCascade?.run;
+                setPendingCascade(null);
+                void run?.();
+              }}
+            >
+              继续并清空下游内容
+            </button>
+          </>
+        )}
+      />
     </div>
   );
 }

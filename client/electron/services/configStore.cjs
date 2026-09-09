@@ -375,7 +375,10 @@ function normalizeComponentsConfig(source) {
     : {};
   return {
     file_parser: {
-      provider: fileParser.provider || defaultConfig.components.file_parser.provider,
+      // 唯一未设白名单的枚举字段：非法值会让设置页 select 渲染空白并静默回退 local
+      provider: ['local', 'mineru-accurate-api', 'mineru-agent-api'].includes(fileParser.provider)
+        ? fileParser.provider
+        : defaultConfig.components.file_parser.provider,
       mineru_token: fileParser.mineru_token || defaultConfig.components.file_parser.mineru_token,
       mineru_base_url: normalizeMineruBaseUrl(
         fileParser.mineru_base_url,

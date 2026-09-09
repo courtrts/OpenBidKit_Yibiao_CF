@@ -574,3 +574,10 @@
 [data-theme='dark'] .yb-switch-thumb {
   background: var(--yb-surface);
 }
+
+/* 弹窗描述里的长路径/长 ID：允许断行、可选中复制，避免被卡片裁剪 */
+.app-dialog-card-head p {
+  word-break: break-all;
+  overflow-wrap: anywhere;
+  user-select: text;
+}

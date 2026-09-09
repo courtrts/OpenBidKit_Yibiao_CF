@@ -222,6 +222,13 @@ function ContentPage({
       void startContentGeneration({ resume: true, onlyMissing: true });
       return;
     }
+    if (failed && generatedCount === leaves.length && leaves.length) {
+      // 失败态下全部叶子已生成：走增量续跑恢复审校，而不是清空全部正文从头重写
+      //（onlyMissing:false 会在启动瞬间清空所有叶子正文，数万字 AI 产出一次性丢失）。
+      showToast('将从失败处继续审校，已生成正文不会丢失', 'info');
+      void startContentGeneration({ onlyMissing: true });
+      return;
+    }
     if (generatedCount === leaves.length && leaves.length) {
       void startContentGeneration({ onlyMissing: false });
       return;

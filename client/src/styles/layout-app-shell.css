@@ -578,3 +578,33 @@
 .background-task-item-pause:hover {
   color: var(--yb-warning-deep);
 }
+
+/* 模型未配置引导条 */
+.model-ready-banner {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 0 0 18px;
+  padding: 12px 16px;
+  color: var(--yb-text);
+  background: var(--yb-warning-soft, #fdf6ec);
+  border: 1px solid var(--yb-warning-border, #f0dcb0);
+  border-radius: var(--yb-radius-lg);
+}
+
+.model-ready-banner strong {
+  margin-right: 8px;
+}
+
+.model-ready-banner > span:first-child {
+  flex: 1 1 320px;
+  color: var(--yb-text-soft);
+  font-size: 13px;
+}
+
+.model-ready-banner-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}

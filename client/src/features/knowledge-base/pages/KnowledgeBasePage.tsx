@@ -659,11 +659,15 @@ function KnowledgeBasePage() {
       if (deleteConfirm.type === 'folder') {
         const { folderId } = deleteConfirm;
         const result = await window.yibiao?.knowledgeBase.deleteFolder(folderId);
-        const folders = index.folders.filter((item) => item.id !== folderId);
-        const documents = index.documents.filter((document) => document.folder_id !== folderId);
-        setIndex({ folders, documents });
+        // 函数式更新：删除的 await 期间可能有新文档事件并入 index，
+        // 用闭包旧快照整体替换会回滚这些并发更新
+        setIndex((prev) => ({
+          folders: prev.folders.filter((item) => item.id !== folderId),
+          documents: prev.documents.filter((document) => document.folder_id !== folderId),
+        }));
+        const remainingFolders = index.folders.filter((item) => item.id !== folderId);
         if (activeFolderId === folderId) {
-          setActiveFolderId(folders[0]?.id || '');
+          setActiveFolderId(remainingFolders[0]?.id || '');
         }
         setViewer((prev) => (prev?.document.folder_id === folderId ? null : prev));
         showToast(result?.message || '文件夹已删除', 'success');

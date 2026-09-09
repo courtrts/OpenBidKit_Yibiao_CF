@@ -1151,11 +1151,14 @@ function SettingsPage({ onDeveloperModeChange, registerLeaveGuard }: SettingsPag
         tested_at: new Date().toISOString(),
         last_error: '',
       };
+      // 测试可持续数十秒，期间用户可能已保存其它配置：以最新落盘配置为基底，
+      // 只合并生图相关字段，避免用过期快照全量回滚测试期间的变更。
+      const latestConfig = await window.yibiao?.config.load().catch(() => null) || config;
       const testedConfig: ClientConfig = {
-        ...config,
+        ...latestConfig,
         image_model: testedImageModel,
         image_model_profiles: {
-          ...config.image_model_profiles,
+          ...latestConfig.image_model_profiles,
           [testedImageModel.provider]: testedImageModel,
         },
       };
@@ -1186,11 +1189,12 @@ function SettingsPage({ onDeveloperModeChange, registerLeaveGuard }: SettingsPag
         tested_at: new Date().toISOString(),
         last_error: message,
       };
+      const latestFailedBase = await window.yibiao?.config.load().catch(() => null) || config;
       const failedConfig: ClientConfig = {
-        ...config,
+        ...latestFailedBase,
         image_model: failedImageModel,
         image_model_profiles: {
-          ...config.image_model_profiles,
+          ...latestFailedBase.image_model_profiles,
           [failedImageModel.provider]: failedImageModel,
         },
       };

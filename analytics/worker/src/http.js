@@ -9,6 +9,10 @@ export function json(data, init = {}) {
   return Response.json(data, {
     ...init,
     headers: {
+      // 默认 no-store + nosniff：管理端动态数据不落浏览器磁盘缓存，
+      // 且 JSON 响应声明禁止 MIME 嗅探；显式传入的 init.headers 可覆盖默认值。
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'no-store',
       ...corsHeaders,
       ...(init.headers || {}),
     },

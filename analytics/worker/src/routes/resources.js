@@ -71,6 +71,8 @@ export async function handleResourceImage(request, env, url) {
       ...corsHeaders,
       'Content-Type': object.httpMetadata?.contentType || 'application/octet-stream',
       'Cache-Control': 'public, max-age=604800',
+      // 公开端点回显 R2 对象内容，禁止 MIME 嗅探
+      'X-Content-Type-Options': 'nosniff',
     },
   });
 }

@@ -1,0 +1,7 @@
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: no-referrer
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https://toubiao.ztok.dpdns.org data:; connect-src 'self' https://toubiao.ztok.dpdns.org http://localhost:* https://localhost:*; frame-ancestors 'none'; base-uri 'none'; form-action 'self'
+  Cache-Control: no-cache

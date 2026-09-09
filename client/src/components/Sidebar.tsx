@@ -123,6 +123,7 @@ function Sidebar({ activeSection, developerMode, onSectionChange }: SidebarProps
       <div className="sidebar-footer">
         <div className="sidebar-footer-shortcuts">
           {collapsed ? wrapTooltip('使用文档', renderUserGuideButton()) : renderUserGuideButton()}
+          {collapsed ? wrapTooltip('快捷键', renderShortcutsButton()) : renderShortcutsButton()}
           {collapsed ? wrapTooltip('加群', renderGroupChatButton(() => setGroupChatOpen(true))) : renderGroupChatButton(() => setGroupChatOpen(true))}
         </div>
         {collapsed ? wrapTooltip('设置', renderSettingsButton(activeSection, onSectionChange)) : renderSettingsButton(activeSection, onSectionChange)}
@@ -171,6 +172,25 @@ function renderSettingsButton(activeSection: SectionId, onSectionChange: (sectio
       <span className="settings-copy">
         <strong>设置</strong>
         <small>模型与解析配置</small>
+      </span>
+    </button>
+  );
+}
+
+function renderShortcutsButton() {
+  return (
+    <button
+      type="button"
+      className="settings-trigger sidebar-footer-shortcut"
+      onClick={() => window.dispatchEvent(new CustomEvent('yibiao:open-shortcuts'))}
+      aria-label="键盘快捷键"
+    >
+      <span className="nav-icon" aria-hidden="true">
+        <strong style={{ fontSize: 13 }}>?</strong>
+      </span>
+      <span className="settings-copy">
+        <strong>快捷键</strong>
+        <small>速记面板</small>
       </span>
     </button>
   );

@@ -133,7 +133,7 @@ function OutlinePage({
   const staleText = running && Number.isFinite(updatedAt) ? `最近更新 ${Math.floor(Math.max(0, nowTick - updatedAt) / 1000)} 秒前` : '';
 
   useEffect(() => {
-    window.yibiao?.knowledgeBase.list().then(setKnowledgeIndex).catch(() => setKnowledgeIndex(emptyKnowledgeIndex));
+    window.yibiao?.knowledgeBase.list().then((data) => setKnowledgeIndex(data && Array.isArray(data.documents) ? data : emptyKnowledgeIndex)).catch(() => setKnowledgeIndex(emptyKnowledgeIndex));
   }, []);
 
   useEffect(() => {

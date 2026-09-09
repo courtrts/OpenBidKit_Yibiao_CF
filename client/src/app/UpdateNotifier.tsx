@@ -73,6 +73,7 @@ function UpdateNotifier({ noticeEnabled }: UpdateNotifierProps) {
     let disposed = false;
 
     const promptPluginUpdates = (updates: PluginUpdateInfo[]) => {
+      if (!Array.isArray(updates)) return;
       if (disposed || updates.length === 0) return;
       const signature = updates
         .map((plugin) => `${plugin.id}@${plugin.version}`)

@@ -307,12 +307,20 @@ export async function recordTrackClient(env, event) {
       event.clientId,
     ]);
     if (result?.meta?.changes) {
-      await ensureTotals(db, event.projectName, updatedAt);
-      await run(db, `
-        UPDATE stats_totals
-        SET total_clients = total_clients + 1, updated_at = ?
-        WHERE project_name = ?
-      `, [updatedAt, event.projectName]);
+      // batch 原子提交：计数行与 totals 递增要么同时生效要么同时缺失，
+      // 避免 isolate 被 CPU 掐断时"客户端已存在、计数未加"的当日少计。
+      await batchRun(db, [
+        db.prepare(`
+          INSERT INTO stats_totals (project_name, total_clients, total_open, total_page_views, total_events, total_ai_requests, last_rollup_date, updated_at)
+          VALUES (?, 0, 0, 0, 0, 0, '', ?)
+          ON CONFLICT(project_name) DO NOTHING
+        `).bind(event.projectName, updatedAt),
+        db.prepare(`
+          UPDATE stats_totals
+          SET total_clients = total_clients + 1, updated_at = ?
+          WHERE project_name = ?
+        `).bind(updatedAt, event.projectName),
+      ]);
       return;
     }
   }
@@ -506,7 +514,7 @@ export async function queryStatsClients(env, projectName, filters, page, pageSiz
       untrusted_reason AS untrustedReason
     FROM stats_clients
     WHERE ${where}
-    ORDER BY last_active_date DESC, first_seen_at DESC, client_id ASC
+    ORDER BY last_active_date DESC, client_id DESC
     LIMIT ? OFFSET ?
   `, [...bindings, normalizedPageSize, offset]);
 
@@ -1319,10 +1327,10 @@ export async function queryStatsAgentRuntime(env, projectName, range) {
 
 export async function queryStatsProjects(env) {
   const db = requireStatsDb(env);
+  // totals 与 clients 行在写入侧已原子同生（见 recordTrackClient 的 batch），
+  // 仅扫每项目一行的小表即可给出项目全集，避免对最大表做全量 UNION 去重。
   const rows = await all(db, `
     SELECT project_name AS projectName FROM stats_totals
-    UNION
-    SELECT project_name AS projectName FROM stats_clients
     ORDER BY projectName ASC
   `);
   return rows.map((row) => row.projectName).filter(Boolean);
@@ -2816,6 +2824,21 @@ export async function catchUpIncompleteRollups(env, days = 7) {
         console.warn(`[analytics] catch-up rollup failed: ${projectName}/${activityDate} ${error?.message || String(error)}`);
       }
     }
+  }
+  // used_bytes 对账：诊断包摄入的 reserve→put→insert 三步若在进程被杀时中断，
+  // 配额会单向虚增直至项目永久拒收。每日以"就绪日志行的实际字节总和"校准一次。
+  try {
+    await run(db, `
+      UPDATE agent_error_settings
+      SET used_bytes = (
+        SELECT COALESCE(SUM(compressed_bytes), 0)
+        FROM agent_error_logs
+        WHERE agent_error_logs.project_name = agent_error_settings.project_name
+          AND status = 'ready'
+      ), updated_at = ?
+    `, [nowText()]);
+  } catch (error) {
+    console.warn(`[analytics] agent error quota reconcile failed: ${error?.message || String(error)}`);
   }
   return results;
 }

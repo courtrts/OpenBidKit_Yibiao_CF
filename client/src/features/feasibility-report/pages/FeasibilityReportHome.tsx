@@ -5,9 +5,9 @@ import { AppDialog, AppSwitch, FloatingToolbar, ProgressBar, ToolbarArrowLeftIco
 import type { FloatingToolbarGroup } from '../../../shared/ui';
 import type { OutlineItem } from '../../../shared/types';
 import type { ExportFormatConfig, ExportTemplateRecord } from '../../../shared/types/exportFormat';
-import { DEFAULT_EXPORT_FORMAT } from '../../../shared/types/exportFormat';
 import type { SectionId } from '../../../shared/types/navigation';
 import { TemplatePreview } from '../../export-format/pages/ExportFormatPage';
+import { withExportFormatDefaults } from '../../export-format/exportFormatNormalize';
 import { buildExportFormatCssVars } from '../../../shared/utils/exportFormatCss';
 import type { WordExportProgressEvent } from '../../../shared/types';
 import AnalysisPage from './AnalysisPage';
@@ -100,9 +100,15 @@ function FeasibilityReportHome({ registerLeaveGuard, onSectionChange }: Feasibil
     : 0;
   const wrappingEnabled = exportOptions.includeCover || exportOptions.includePreparationNotes || exportOptions.includeAppendixTables;
   const selectedExportTemplate = exportTemplates.find((item) => item.template_id === selectedExportTemplateId) || null;
-  const exportTemplatePreviewStyle = useMemo(
-    () => buildExportFormatCssVars(selectedExportTemplate?.config || DEFAULT_EXPORT_FORMAT),
+  // 模板 config 全链路归一化：历史模板可能缺后加字段块，直接消费会在
+  // 预览/导出处 render 期抛错。
+  const selectedExportTemplateConfig = useMemo(
+    () => withExportFormatDefaults(selectedExportTemplate?.config ?? undefined),
     [selectedExportTemplate],
+  );
+  const exportTemplatePreviewStyle = useMemo(
+    () => buildExportFormatCssVars(selectedExportTemplateConfig),
+    [selectedExportTemplateConfig],
   );
   const filteredExportTemplates = useMemo(() => {
     const keyword = exportTemplateSearch.trim().toLowerCase();
@@ -415,7 +421,7 @@ function FeasibilityReportHome({ registerLeaveGuard, onSectionChange }: Feasibil
       return;
     }
     setExportTemplateDialogOpen(false);
-    await runExportWord(selectedExportTemplate.config);
+    await runExportWord(selectedExportTemplateConfig);
   };
 
   const createExportTemplate = () => {
@@ -610,12 +616,22 @@ function FeasibilityReportHome({ registerLeaveGuard, onSectionChange }: Feasibil
           locked={contentRunning || contentPaused || reviewRunning || outlineAdjusting}
           hasAnalysis={Boolean(state.analysisMarkdown.trim())}
           onConfigChange={async (config) => {
-            const next = await window.yibiao!.feasibilityReport.saveOutlineConfig(config);
-            setState(next);
+            try {
+              const next = await window.yibiao!.feasibilityReport.saveOutlineConfig(config);
+              setState(next);
+            } catch (error) {
+              showToast(error instanceof Error ? error.message : '保存大纲配置失败，请重试', 'error');
+              throw error;
+            }
           }}
           onOutlineSaved={async (request) => {
-            const patch = await window.yibiao!.feasibilityReport.saveOutline(request);
-            setState((prev) => ({ ...prev, ...patch }));
+            try {
+              const patch = await window.yibiao!.feasibilityReport.saveOutline(request);
+              setState((prev) => ({ ...prev, ...patch }));
+            } catch (error) {
+              showToast(error instanceof Error ? error.message : '保存大纲失败，请重试', 'error');
+              throw error;
+            }
           }}
           onStart={startOutline}
         />
@@ -649,9 +665,14 @@ function FeasibilityReportHome({ registerLeaveGuard, onSectionChange }: Feasibil
           locked={contentRunning || contentPaused || reviewRunning}
           hasKeyParameters={Boolean(state.keyParametersMarkdown.trim())}
           onSave={async (item: OutlineItem, content: string) => {
-            const patch = await window.yibiao!.feasibilityReport.saveChapterContent({ nodeId: item.id, content });
-            setState((prev) => ({ ...prev, ...patch }));
-            showToast('章节已保存', 'success');
+            try {
+              const patch = await window.yibiao!.feasibilityReport.saveChapterContent({ nodeId: item.id, content });
+              setState((prev) => ({ ...prev, ...patch }));
+              showToast('章节已保存', 'success');
+            } catch (error) {
+              showToast(error instanceof Error ? error.message : '章节保存失败，请重试', 'error');
+              throw error;
+            }
           }}
         />
       )}
@@ -780,7 +801,7 @@ function FeasibilityReportHome({ registerLeaveGuard, onSectionChange }: Feasibil
                       <span className="section-kicker">预览</span>
                       <strong>{selectedExportTemplate.template_name}</strong>
                     </div>
-                    <TemplatePreview config={selectedExportTemplate.config} previewStyle={exportTemplatePreviewStyle} />
+                    <TemplatePreview config={selectedExportTemplateConfig} previewStyle={exportTemplatePreviewStyle} />
                   </>
                 ) : (
                   <div className="export-template-select-preview-empty">

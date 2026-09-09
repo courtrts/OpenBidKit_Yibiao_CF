@@ -172,8 +172,14 @@ function OutlinePage({
       targetWords: words,
       referenceDocumentIds: draftKnowledgeIds,
     };
-    await onConfigChange(config);
-    setDialogOpen(false);
+    try {
+      await onConfigChange(config);
+      setDialogOpen(false);
+    } catch (error) {
+      // 父级已 toast 提示失败；保持弹窗打开让用户重试或取消
+      if (!showToast) return;
+      void showToast;
+    }
     await onStart(config);
   };
 

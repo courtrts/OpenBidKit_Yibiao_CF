@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'r
 import { trackPageView } from '../../../shared/analytics/analytics';
 import { useToast } from '../../../shared/ui';
 import type { ExportTemplateRecord } from '../../../shared/types/exportFormat';
-import { DEFAULT_EXPORT_FORMAT } from '../../../shared/types/exportFormat';
+import { withExportFormatDefaults } from '../exportFormatNormalize';
 import { buildExportFormatCssVars } from '../../../shared/utils/exportFormatCss';
 import { TemplatePreview } from './ExportFormatPage';
 
@@ -29,7 +29,7 @@ function MyTemplatesPage({ onCreateTemplate, onEditTemplate }: MyTemplatesPagePr
   const [deleting, setDeleting] = useState(false);
 
   const selectedTemplate = templates.find((template) => template.template_id === selectedId) || templates[0] || null;
-  const previewConfig = selectedTemplate?.config || DEFAULT_EXPORT_FORMAT;
+  const previewConfig = withExportFormatDefaults(selectedTemplate?.config ?? undefined);
   const previewStyle = useMemo<CSSProperties>(() => buildExportFormatCssVars(previewConfig), [previewConfig]);
 
   const loadTemplates = useCallback(async () => {

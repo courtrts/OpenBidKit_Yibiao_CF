@@ -357,7 +357,9 @@ function ContentPage({
                     disabled={locked}
                     onClick={() => {
                       if (!selectedItem) return;
-                      void onSave(selectedItem, draft).then(() => setEditing(false));
+                      void onSave(selectedItem, draft)
+      .then(() => setEditing(false))
+      .catch(() => undefined);
                     }}
                   >保存</button>
                   <button type="button" className="secondary-action" onClick={() => setEditing(false)}>取消</button>

@@ -224,7 +224,11 @@ export async function readModelInfoCacheIndex(env) {
       parsed = null;
     }
   }
-  indexMemo = { key, value: parsed };
+  // 只缓存解析成功的结果：解析失败（null）不更新键，下一次请求会重新
+  // 读取 KV 重试，避免一次坏数据被记忆化“固化”成持续 503。
+  if (parsed) {
+    indexMemo = { key, value: parsed };
+  }
   return parsed;
 }
 

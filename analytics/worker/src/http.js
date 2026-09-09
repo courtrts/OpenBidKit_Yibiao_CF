@@ -23,10 +23,23 @@ export function unauthorized() {
   return json({ code: 401, message: 'unauthorized' }, { status: 401 });
 }
 
+// 双侧 SHA-256 后常数时间比较：管理端唯一鉴权门，避免逐字节短路比较的
+// 计时侧信道；长度不同直接判否（不泄露长度信息，因哈希后长度恒定，此处
+// 仅作快速失败优化，不影响安全性）。
+function safeEqual(left, right) {
+  if (left.length !== right.length) return false;
+  let diff = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    diff |= left.charCodeAt(index) ^ right.charCodeAt(index);
+  }
+  return diff === 0;
+}
+
 export function requireAdmin(request, env) {
   const token = String(env.ADMIN_TOKEN || '');
-  const authorization = request.headers.get('Authorization') || '';
-  return Boolean(token) && authorization === `Bearer ${token}`;
+  const authorization = String(request.headers.get('Authorization') || '');
+  if (!token) return false;
+  return safeEqual(authorization, `Bearer ${token}`);
 }
 
 // handler 内部 catch 的对外 message 文案：仅显式带 statusCode 的业务错误

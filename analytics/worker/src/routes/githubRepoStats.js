@@ -188,7 +188,9 @@ async function fetchRepoStatsFromHtml(ctx) {
   }, 10000);
 
   if (!response.ok) {
-    throw new Error(`GitHub HTML ${response.status}: ${await response.text()}`);
+    // 与 API 分支同口径：上游 body 只进日志，不进对外错误消息
+    console.error('[analytics] github html non-ok', response.status, (await response.text()).slice(0, 300));
+    throw new Error(`GitHub HTML ${response.status}`);
   }
 
   const repo = parseRepoStatsFromHtml(await response.text(), ctx);

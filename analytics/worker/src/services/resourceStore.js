@@ -139,6 +139,28 @@ export async function listPublicResources(env, { query = '', origin = '' } = {})
   return (result.results || []).map((row) => normalizeResourceRow(row, origin)).filter(Boolean);
 }
 
+// 全量枚举（分页循环，突破 listAdminResources 的 LIMIT 500）：
+// 供汇总阶段按 analytics_key 重算累计点击使用，只需两个轻量列。
+export async function listAllResourceAnalyticsKeys(env) {
+  const db = requireResourceDb(env);
+  const keys = [];
+  const pageSize = 500;
+  for (let offset = 0; offset <= 100000; offset += pageSize) {
+    const result = await db.prepare(
+      `SELECT id FROM resources ORDER BY sort_order ASC, updated_at DESC LIMIT ? OFFSET ?`,
+    ).bind(pageSize, offset).all();
+    const rows = result.results || [];
+    for (const row of rows) {
+      const id = String(row.id || '').trim();
+      if (!id) continue;
+      const analyticsKey = createResourceAnalyticsKey(id);
+      if (analyticsKey) keys.push({ id, analyticsKey });
+    }
+    if (rows.length < pageSize) break;
+  }
+  return keys;
+}
+
 export async function listAdminResources(env, { origin = '' } = {}) {
   const db = requireResourceDb(env);
   const result = await db.prepare(

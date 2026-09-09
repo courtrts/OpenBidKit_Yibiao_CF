@@ -21,7 +21,7 @@ import {
 } from '../utils.js';
 import { queryAnalytics } from './analyticsQuery.js';
 import { listBlockedIps } from './ipBlockStore.js';
-import { listAdminResources } from './resourceStore.js';
+import { listAdminResources, listAllResourceAnalyticsKeys } from './resourceStore.js';
 
 const UNKNOWN_VERSION = '未知版本';
 const MAX_ANALYTICS_ROWS = 100000;
@@ -2568,7 +2568,9 @@ async function runResourcesStage(env, activityDate, projectNames, completedByPro
   }
 
   const resourceDb = requireResourceDb(env);
-  const resources = await listAdminResources(env, { origin: '' });
+  // 用分页全量键列表（listAdminResources 有 LIMIT 500，超出第 500 条的资源
+  // 点击量会永久停留在旧值不被重算）。
+  const resources = await listAllResourceAnalyticsKeys(env);
   const countByKey = new Map((await queryHistoricalResourceClickRows(env, activityDate))
     .map((row) => [row.resourceKey, row.clickCount]));
   const rows = resources.map((resource) => ({

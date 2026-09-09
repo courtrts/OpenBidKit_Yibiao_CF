@@ -928,7 +928,18 @@ function DuplicateCheckPage() {
     }
   }
 
+  // 重置清空全部上传文件与查重结果且不可恢复：先弹确认
+  const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
+
   const resetFiles = () => {
+    if (isAnalysisRunning) {
+      showToast('标书查重分析正在运行，请完成后再重置文件', 'info');
+      return;
+    }
+    setResetConfirmOpen(true);
+  };
+
+  const runResetFiles = () => {
     if (isAnalysisRunning) {
       showToast('标书查重分析正在运行，请完成后再重置文件', 'info');
       return;
@@ -987,7 +998,7 @@ function DuplicateCheckPage() {
           variant: 'danger',
           disabled: isAnalysisRunning,
           tooltip: '清空当前标书查重流程',
-          onClick: resetFiles,
+          onClick: () => setResetConfirmOpen(true),
         },
         {
           id: 'home',
@@ -1151,6 +1162,20 @@ function DuplicateCheckPage() {
       />
 
       <FloatingToolbar groups={toolbarGroups} label="标书查重工具条" />
+
+      <AppDialog
+        open={resetConfirmOpen}
+        onOpenChange={setResetConfirmOpen}
+        kicker="重置标书查重"
+        title="确认重置？"
+        description="将清空已上传的投标文件和全部查重结果，且不可恢复。"
+        actions={(
+          <>
+            <button type="button" className="secondary-action" onClick={() => setResetConfirmOpen(false)}>取消</button>
+            <button type="button" className="danger-action" onClick={() => { setResetConfirmOpen(false); runResetFiles(); }}>确认重置</button>
+          </>
+        )}
+      />
     </div>
   );
 }

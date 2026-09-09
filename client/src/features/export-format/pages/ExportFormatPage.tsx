@@ -221,6 +221,7 @@ function FontPicker({ value, options, onChange }: FontPickerProps) {
                 event.preventDefault();
                 pickFont(font);
               }}
+              onClick={() => pickFont(font)}
               role="option"
               aria-selected={font === value}
             >

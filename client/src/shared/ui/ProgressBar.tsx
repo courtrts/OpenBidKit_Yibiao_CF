@@ -21,7 +21,11 @@ export default function ProgressBar({ value, label, tone = 'primary', active = f
   return (
     <span
       className={`yb-progress-track${tone !== 'primary' ? ` is-${tone}` : ''}${active ? ' is-active' : ''}${className ? ` ${className}` : ''}`}
+      role="progressbar"
       aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={clamped}
       style={{ '--progress': `${clamped}%` } as CSSProperties}
     >
       <span />

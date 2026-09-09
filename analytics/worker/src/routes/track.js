@@ -21,8 +21,16 @@ export async function handleTrack(request, env) {
     return json({ code: 413, message: 'payload too large' }, { status: 413 });
   }
 
+  let body;
   try {
-    const body = await request.json();
+    // 垃圾/截断 body 的解析失败属客户端错误：与其他 POST 端点同口径返回 400，
+    // 不落入 500 污染错误率监控。
+    body = await request.json();
+  } catch {
+    return json({ code: 400, message: 'invalid json body' }, { status: 400 });
+  }
+
+  try {
     const event = normalizeTrackBody(body, request);
     if (!VERSION_FORMAT_PATTERN.test(event.version)) {
       // 版本号格式不合法（含空版本号）：静默丢弃，不触发当天客户端数据清理。

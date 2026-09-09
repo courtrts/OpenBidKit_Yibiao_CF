@@ -1,6 +1,7 @@
 import { internalErrorMessage, json, methodNotAllowed, rejectOversizedBody, requireAdmin, unauthorized } from '../http.js';
 import { readLicenseConfig, saveLicenseConfig } from '../services/licenseStore.js';
 import { signPayload, verifySignedObject } from '../services/licenseCrypto.js';
+import { DEFAULT_FREE_LICENSE_DAYS } from '../constants.js';
 import { isValidProjectName, normalizeText } from '../utils.js';
 
 const LICENSE_PLANS = new Set(['free', 'personal_premium', 'enterprise_premium']);
@@ -217,7 +218,7 @@ export async function handleOfflineLicense(request, env) {
     keyId: normalizeText(env.LICENSE_KEY_ID || env.YIBIAO_LICENSE_KEY_ID || 'official-build-key-2026-01', 80),
     build: normalizeBuildInfo(null),
     config: {
-      freeLicenseDays: 30,
+      freeLicenseDays: DEFAULT_FREE_LICENSE_DAYS,
       expirePopupEnabled: normalizeBooleanValue(body.expirePopupEnabled ?? body.expire_popup_enabled, true),
       expirePopupDismissible: normalizeBooleanValue(body.expirePopupDismissible ?? body.expire_popup_dismissible, true),
     },

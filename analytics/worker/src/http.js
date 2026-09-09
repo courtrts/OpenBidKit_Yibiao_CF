@@ -27,9 +27,8 @@ export function unauthorized() {
   return json({ code: 401, message: 'unauthorized' }, { status: 401 });
 }
 
-// 双侧 SHA-256 后常数时间比较：管理端唯一鉴权门，避免逐字节短路比较的
-// 计时侧信道；长度不同直接判否（不泄露长度信息，因哈希后长度恒定，此处
-// 仅作快速失败优化，不影响安全性）。
+// 常数时间比较：管理端唯一鉴权门。长度不同的请求直接判否（会泄露期望头的
+// 长度，这是该实现的已知取舍）；等长时逐字符异或累积，不因内容提前返回。
 function safeEqual(left, right) {
   if (left.length !== right.length) return false;
   let diff = 0;

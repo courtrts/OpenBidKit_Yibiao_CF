@@ -272,10 +272,14 @@ async function uploadResourceImage(env, resourceId, file) {
   const size = Number(file.size || 0);
   const type = String(file.type || '').toLowerCase();
   if (size > RESOURCE_IMAGE_MAX_BYTES) {
-    throw new Error('image too large');
+    const error = new Error('image too large');
+    error.statusCode = 400;
+    throw error;
   }
   if (!allowedImageTypes.has(type)) {
-    throw new Error('unsupported image type');
+    const error = new Error('unsupported image type');
+    error.statusCode = 400;
+    throw error;
   }
 
   const key = createResourceImageKey(resourceId, file.name, type);

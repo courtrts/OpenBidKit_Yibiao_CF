@@ -6,6 +6,7 @@ import RequiredOnlineServicesPrompt from './app/RequiredOnlineServicesPrompt';
 import UpdateNotifier from './app/UpdateNotifier';
 import AppShell from './components/AppShell';
 import { trackAppOpen, trackConfigUsage, trackPageView } from './shared/analytics/analytics';
+import { getSectionOrder } from './app/menuConfig';
 import type { SectionId } from './shared/types/navigation';
 
 function isDeveloperSection(section: SectionId) {
@@ -16,10 +17,25 @@ function isManagedWorkbenchSection(section: SectionId) {
   return section === 'technical-plan' || section === 'existing-plan-expansion' || section === 'feasibility-report';
 }
 
+const LAST_SECTION_STORAGE_KEY = 'yibiao:last-section';
+
+// 启动时恢复上次工作板块：重开应用直接回到现场，省去"子菜单 → 工作流"的
+// 重复导航；存储值不在当前菜单清单内（版本变化）时回退默认入口。
+function readLastSection(developerMode: boolean): SectionId | null {
+  try {
+    const saved = localStorage.getItem(LAST_SECTION_STORAGE_KEY) as SectionId | null;
+    if (!saved) return null;
+    return getSectionOrder(developerMode).includes(saved) ? saved : null;
+  } catch {
+    return null;
+  }
+}
+
 function App() {
-  const [activeSection, setActiveSection] = useState<SectionId>('bid-generation');
   const [developerMode, setDeveloperMode] = useState(false);
+  const [activeSection, setActiveSection] = useState<SectionId>(() => 'bid-generation');
   const leaveGuardRef = useRef<((nextSection?: string) => Promise<boolean>) | null>(null);
+  const restoreDoneRef = useRef(false);
 
   useEffect(() => {
     trackAppOpen();
@@ -28,9 +44,26 @@ function App() {
       .then((config) => {
         setDeveloperMode(Boolean(config?.developer_mode));
         trackConfigUsage({}, config);
+        // 恢复上次工作板块（在 developerMode 已知后做清单校验，仅执行一次）
+        if (restoreDoneRef.current) return;
+        restoreDoneRef.current = true;
+        const saved = readLastSection(Boolean(config?.developer_mode));
+        if (saved && saved !== 'bid-generation') {
+          setActiveSection(saved);
+          activeSectionRef.current = saved;
+        }
       })
       .catch((error) => console.warn('读取开发者模式失败', error));
   }, []);
+
+  // 板块变化写入本地，供下次启动恢复
+  useEffect(() => {
+    try {
+      localStorage.setItem(LAST_SECTION_STORAGE_KEY, activeSection);
+    } catch {
+      // 存储不可用时仅失去恢复能力
+    }
+  }, [activeSection]);
 
   useEffect(() => {
     trackPageView(activeSection);

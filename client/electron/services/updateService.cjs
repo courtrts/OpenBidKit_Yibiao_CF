@@ -128,7 +128,7 @@ function getUpdateChannel(configStore) {
   return normalizeUpdateChannel(config.update_channel);
 }
 
-function requestJson(url, label, headers = {}) {
+function requestJson(url, label, headers = {}, redirectCount = 0) {
   return new Promise((resolve, reject) => {
     let parsed;
     try {
@@ -141,6 +141,11 @@ function requestJson(url, label, headers = {}) {
     const request = https.get(parsed, { headers: { 'User-Agent': 'yibiao-client', ...headers } }, (response) => {
       if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
         response.resume();
+        // 与 downloadFile 的 5 跳上限对齐：重定向环不再无限请求
+        if (redirectCount >= 5) {
+          reject(new Error(`${label}重定向次数过多`));
+          return;
+        }
         let nextParsed;
         try {
           nextParsed = assertAllowedUpdateUrl(new URL(response.headers.location, parsed).toString(), `${label}请求`);
@@ -148,7 +153,7 @@ function requestJson(url, label, headers = {}) {
           reject(error);
           return;
         }
-        requestJson(nextParsed.toString(), label, headers).then(resolve, reject);
+        requestJson(nextParsed.toString(), label, headers, redirectCount + 1).then(resolve, reject);
         return;
       }
 

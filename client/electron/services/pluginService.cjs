@@ -197,7 +197,9 @@ class PluginService {
     }
 
     return new Promise((resolve, reject) => {
-      https.get(PLUGIN_MARKET_URL, (res) => {
+      // 与 downloadPlugin 同款 60s 超时：市场服务器"已连接不响应"时若无限挂起，
+      // 安装/更新/批量升级的操作锁会被永久占用，只能重启应用恢复。
+      const request = https.get(PLUGIN_MARKET_URL, (res) => {
         let data = '';
         res.on('data', (chunk) => { data += chunk; });
         res.on('end', () => {
@@ -214,7 +216,11 @@ class PluginService {
             reject(error);
           }
         });
-      }).on('error', reject);
+      });
+      request.setTimeout(60000, () => {
+        request.destroy(new Error('插件市场请求超时（60 秒）'));
+      });
+      request.on('error', reject);
     });
   }
 

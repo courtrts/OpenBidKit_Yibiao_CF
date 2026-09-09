@@ -57,6 +57,16 @@ function createOpenXmlHelperService({ app, configStore } = {}) {
   }
 
   function handleStdoutChunk(chunk) {
+
+  // stdout 缓冲上限：助手进程按约定只写小体积 JSON 信号行；异常倾倒大输出时
+  // 丢弃并杀掉助手重建，避免主进程内存无界增长。
+  if (stdoutBuffer.length > 1024 * 1024) {
+    stdoutBuffer = '';
+    try {
+      child?.kill();
+    } catch (_) {}
+    return;
+  }
     stdoutBuffer += String(chunk || '');
     let newline = stdoutBuffer.indexOf('\n');
     while (newline >= 0) {

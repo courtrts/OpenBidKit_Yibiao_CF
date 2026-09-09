@@ -2512,7 +2512,10 @@ export async function backfillClientActivityWindow(env, projectName, startDate, 
   return { projectName: normalizeProjectName(projectName), startDate, endDate, rows: rows.length };
 }
 
-async function queryHistoricalResourceClickRows(env, activityDate, projectNames) {
+// 资源点击累计重算：必须覆盖全部项目（不带 blob1 项目过滤）——
+// 资源库是全局的，若按“本轮 pending 项目”过滤，补跑以单项目粒度执行时
+// 会把其它项目的累计点击覆盖清零。retention 下界仅收敛扫描量（见上）。
+async function queryHistoricalResourceClickRows(env, activityDate) {
   // 点击数是全历史累计语义（覆盖写回资源库），保留无下界上限条件；
   // 叠加一个远超 AE 保留期（90 天）的下界不改变结果，却让每次重算的
   // AE 扫描真正收敛。边界放宽到 365 天，确保不与保留期边界产生临界缝隙。
@@ -2521,8 +2524,7 @@ async function queryHistoricalResourceClickRows(env, activityDate, projectNames)
   const result = await queryAnalytics(env, `
     SELECT blob9 AS resourceKey, SUM(_sample_interval) AS clickCount
     FROM ${DATASET}
-    WHERE blob1 IN ${projectsSql(projectNames)}
-      AND blob2 = 'resource_click'
+    WHERE blob2 = 'resource_click'
       AND blob9 != ''
       AND ${businessDateSqlExpression()} <= ${sqlString(activityDate)}
       AND timestamp >= toDateTime(${sqlString(retentionLowerUtc)}, 'UTC')
@@ -2567,7 +2569,7 @@ async function runResourcesStage(env, activityDate, projectNames, completedByPro
 
   const resourceDb = requireResourceDb(env);
   const resources = await listAdminResources(env, { origin: '' });
-  const countByKey = new Map((await queryHistoricalResourceClickRows(env, activityDate, projects))
+  const countByKey = new Map((await queryHistoricalResourceClickRows(env, activityDate))
     .map((row) => [row.resourceKey, row.clickCount]));
   const rows = resources.map((resource) => ({
     id: resource.id,

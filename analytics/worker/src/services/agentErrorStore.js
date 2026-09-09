@@ -3,7 +3,7 @@ import { isValidProjectName, normalizeText, safePage } from '../utils.js';
 
 const DEFAULT_RETENTION_DAYS = 7;
 const DEFAULT_MAX_STORAGE_BYTES = 2 * 1024 * 1024 * 1024;
-const MAX_COMPRESSED_BYTES = 95 * 1024 * 1024;
+const MAX_COMPRESSED_BYTES = 10 * 1024 * 1024;
 const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 100;
 const MAX_DELETE_COUNT = 50;

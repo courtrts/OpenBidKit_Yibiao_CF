@@ -106,6 +106,8 @@ export interface RejectionCheckResultState {
   progressMessage?: string;
   updatedAt?: string;
   error?: string;
+  /** AI 返回但因缺少关键信息被丢弃的条目数（结果完整性提示用） */
+  droppedFindingsCount?: number;
 }
 
 export interface TypoCheckFinding {
@@ -126,6 +128,8 @@ export interface TypoCheckResultState {
   progressMessage?: string;
   updatedAt?: string;
   error?: string;
+  /** AI 返回但被丢弃的条目数 */
+  droppedTyposCount?: number;
 }
 
 export interface LogicCheckFinding {
@@ -146,6 +150,8 @@ export interface LogicCheckResultState {
   progressMessage?: string;
   updatedAt?: string;
   error?: string;
+  /** AI 返回但被丢弃的条目数 */
+  droppedFindingsCount?: number;
 }
 
 export interface RejectionRiskItem {

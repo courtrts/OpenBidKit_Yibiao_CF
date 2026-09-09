@@ -194,17 +194,20 @@ function normalizeRejectionCheckResultState(state?: Partial<RejectionCheckResult
     return createEmptyRejectionCheckResultState();
   }
 
-  const findings = Array.isArray(state.findings)
-    ? state.findings.map((item, index) => normalizeFindingState(item, index)).filter((item): item is RejectionCheckFinding => Boolean(item))
-    : [];
+  const rawFindings = Array.isArray(state.findings) ? state.findings : [];
+  const findings = rawFindings
+    .map((item, index) => normalizeFindingState(item, index))
+    .filter((item): item is RejectionCheckFinding => Boolean(item));
   const status = ['idle', 'running', 'success', 'error'].includes(state.status || '') ? state.status : 'idle';
   const activeFindingId = findings.some((item) => item.id === state.activeFindingId) ? state.activeFindingId : undefined;
+  const droppedFindingsCount = Math.max(0, rawFindings.length - findings.length);
 
   return {
     ...state,
     status: status as RejectionCheckRunStatus,
     findings,
     activeFindingId,
+    droppedFindingsCount,
   };
 }
 
@@ -231,17 +234,20 @@ function normalizeTypoCheckResultState(state?: Partial<TypoCheckResultState> | n
     return createEmptyTypoCheckResultState();
   }
 
-  const findings = Array.isArray(state.findings)
-    ? state.findings.map((item, index) => normalizeTypoFindingState(item, index)).filter((item): item is TypoCheckFinding => Boolean(item))
-    : [];
+  const rawFindings = Array.isArray(state.findings) ? state.findings : [];
+  const findings = rawFindings
+    .map((item, index) => normalizeTypoFindingState(item, index))
+    .filter((item): item is TypoCheckFinding => Boolean(item));
   const status = ['idle', 'running', 'success', 'error'].includes(state.status || '') ? state.status : 'idle';
   const activeFindingId = findings.some((item) => item.id === state.activeFindingId) ? state.activeFindingId : undefined;
+  const droppedTyposCount = Math.max(0, rawFindings.length - findings.length);
 
   return {
     ...state,
     status: status as RejectionCheckRunStatus,
     findings,
     activeFindingId,
+    droppedTyposCount,
   };
 }
 
@@ -267,17 +273,20 @@ function normalizeLogicCheckResultState(state?: Partial<LogicCheckResultState> |
     return createEmptyLogicCheckResultState();
   }
 
-  const findings = Array.isArray(state.findings)
-    ? state.findings.map((item, index) => normalizeLogicFindingState(item, index)).filter((item): item is LogicCheckFinding => Boolean(item))
-    : [];
+  const rawFindings = Array.isArray(state.findings) ? state.findings : [];
+  const findings = rawFindings
+    .map((item, index) => normalizeLogicFindingState(item, index))
+    .filter((item): item is LogicCheckFinding => Boolean(item));
   const status = ['idle', 'running', 'success', 'error'].includes(state.status || '') ? state.status : 'idle';
   const activeFindingId = findings.some((item) => item.id === state.activeFindingId) ? state.activeFindingId : undefined;
+  const droppedFindingsCount = Math.max(0, rawFindings.length - findings.length);
 
   return {
     ...state,
     status: status as RejectionCheckRunStatus,
     findings,
     activeFindingId,
+    droppedFindingsCount,
   };
 }
 
@@ -1083,7 +1092,14 @@ function RejectionCheckPage() {
     }
   }
 
+  // 重置会清空已上传文件与全部检查结果且不可恢复：先弹确认
+  const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
+
   function resetWorkspace() {
+    setResetConfirmOpen(true);
+  }
+
+  function runResetWorkspace() {
     autoStartedSignatureRef.current = '';
     customCheckItemsSaveVersionRef.current += 1;
     setStep('documents');
@@ -1560,7 +1576,7 @@ function RejectionCheckPage() {
       ? rejectionCheckResult.error || '废标项检查失败，请重新检查。'
       : visibleRejectionCheckStatus === 'success'
         ? visibleRejectionFindings.length
-          ? `发现 ${visibleRejectionFindings.length} 个需要复核的风险项。`
+          ? `发现 ${visibleRejectionFindings.length} 个需要复核的风险项。${rejectionCheckResult.droppedFindingsCount ? `（另有 ${rejectionCheckResult.droppedFindingsCount} 条因缺少关键信息未纳入）` : ''}`
           : '暂未发现符合条件的废标项风险。'
           : hasStaleRejectionCheckResult
             ? '检查输入已变化，请重新检查以刷新结果。'
@@ -1571,7 +1587,7 @@ function RejectionCheckPage() {
       ? typoCheckResult.error || '错别字检查失败，请重新检查。'
       : visibleTypoCheckStatus === 'success'
         ? visibleTypoFindings.length
-          ? `发现 ${visibleTypoFindings.length} 个疑似错别字。`
+          ? `发现 ${visibleTypoFindings.length} 个疑似错别字。${typoCheckResult.droppedTyposCount ? `（另有 ${typoCheckResult.droppedTyposCount} 条因信息不全未纳入）` : ''}`
           : '暂未发现明确错别字。'
         : hasStaleTypoCheckResult
           ? '投标文件已变化，请重新检查以刷新结果。'
@@ -1582,7 +1598,7 @@ function RejectionCheckPage() {
       ? logicCheckResult.error || '逻辑谬误检查失败，请重新检查。'
       : visibleLogicCheckStatus === 'success'
         ? visibleLogicFindings.length
-          ? `发现 ${visibleLogicFindings.length} 个逻辑问题。`
+          ? `发现 ${visibleLogicFindings.length} 个逻辑问题。${logicCheckResult.droppedFindingsCount ? `（另有 ${logicCheckResult.droppedFindingsCount} 条因缺少关键信息未纳入）` : ''}`
           : '暂未发现明确逻辑谬误。'
         : hasStaleLogicCheckResult
           ? '投标文件已变化，请重新检查以刷新结果。'
@@ -2287,6 +2303,19 @@ function RejectionCheckPage() {
         )}
       />
 
+      <AppDialog
+        open={resetConfirmOpen}
+        onOpenChange={setResetConfirmOpen}
+        kicker="重置废标项检查"
+        title="确认重置？"
+        description="将清空已上传的投标文件和全部检查结果，且不可恢复。"
+        actions={(
+          <>
+            <button type="button" className="secondary-action" onClick={() => setResetConfirmOpen(false)}>取消</button>
+            <button type="button" className="danger-action" onClick={() => { setResetConfirmOpen(false); runResetWorkspace(); }}>确认重置</button>
+          </>
+        )}
+      />
       <FloatingToolbar groups={toolbarGroups} label="废标项检查工具条" />
     </div>
   );

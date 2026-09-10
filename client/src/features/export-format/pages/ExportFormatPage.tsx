@@ -31,6 +31,7 @@ import {
 } from '../../../shared/types/exportFormat';
 import { buildExportFormatCssVars } from '../../../shared/utils/exportFormatCss';
 import { formatOutlineNumber, formatOutlineTitle } from '../../../shared/utils/outlineNumbering';
+import { withExportFormatDefaults } from '../../export-format/exportFormatNormalize';
 import type { OutlineItem, WordExportProgressEvent } from '../../../shared/types';
 import {
   EXPORT_LAYOUT_PRESETS,
@@ -280,30 +281,6 @@ function createNewTemplateExportFormat(): ExportFormatConfig {
   return {
     ...createDefaultExportFormat(),
     template_name: createDefaultTemplateName(),
-  };
-}
-
-function withExportFormatDefaults(source: ExportFormatConfig): ExportFormatConfig {
-  const defaults = createDefaultExportFormat();
-  return {
-    ...defaults,
-    ...source,
-    page: { ...defaults.page, ...source.page },
-    heading_border: {
-      ...defaults.heading_border,
-      ...source.heading_border,
-      level_cell_colors: defaults.heading_border.level_cell_colors.map((color, index) => source.heading_border?.level_cell_colors?.[index] || color),
-    },
-    headings: defaults.headings.map((heading, index) => ({ ...heading, ...(source.headings?.[index] || {}) })),
-    body_text: { ...defaults.body_text, ...source.body_text },
-    table: {
-      ...defaults.table,
-      ...source.table,
-      header_row: { ...defaults.table.header_row, ...source.table?.header_row },
-      first_column: { ...defaults.table.first_column, ...source.table?.first_column },
-      body_cell: { ...defaults.table.body_cell, ...source.table?.body_cell },
-    },
-    image: { ...defaults.image, ...source.image },
   };
 }
 

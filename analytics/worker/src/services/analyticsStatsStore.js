@@ -1053,7 +1053,7 @@ async function queryModelHistoryField(db, projectName, field, filters) {
       total_tokens AS totalTokens
     FROM stats_models
     WHERE project_name = ? AND request_type = ?${modelFiltersSql(filters)}
-    ORDER BY events DESC, model ASC
+    ORDER BY events DESC, model ASC, provider ASC, endpoint_host ASC
     LIMIT 100
   `, [projectName, field.requestType]);
 }
@@ -1075,7 +1075,7 @@ async function queryModelAeField(env, projectName, range, field, filters) {
       AND ${aeRangeCondition(range)}
       ${modelFiltersAeSql(filters)}
     GROUP BY provider, endpoint_host, model
-    ORDER BY events DESC, model ASC
+    ORDER BY events DESC, model ASC, provider ASC, endpoint_host ASC
     LIMIT 100
   `);
   return result.data || [];

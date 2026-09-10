@@ -161,11 +161,13 @@ export async function deleteStoredNotice(env, projectName, id) {
 }
 
 // 按客户端公告版本原子累加送达次数。
+// 仅对启用中的公告计数：禁用/已下线公告的公开端点本就返回不到内容，
+// 不再为无效上报消耗 D1 写配额。
 export async function incrementDeliveredUserCount(env, projectName, clientNoticeId) {
   const row = await requireResourceDb(env).prepare(
     `UPDATE notices
      SET delivered_user_count = delivered_user_count + 1
-     WHERE project_name = ? AND client_notice_id = ?
+     WHERE project_name = ? AND client_notice_id = ? AND enabled = 1
      RETURNING delivered_user_count`,
   ).bind(projectName, clientNoticeId).first();
 

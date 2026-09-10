@@ -930,3 +930,55 @@
   color: var(--yb-text-soft);
   line-height: 1.8;
 }
+
+/* 目录两两相似度卡片：最强结论前置展示（数据本已随 Excel 导出，界面此前缺失） */
+.duplicate-similarity-cards {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  margin-bottom: 14px;
+}
+
+.duplicate-similarity-card {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  background: var(--yb-surface, #ffffff);
+  border: 1px solid var(--yb-border-soft, #e4eaf0);
+  border-left: 3px solid var(--yb-primary, #2174fd);
+  border-radius: 10px;
+}
+
+.duplicate-similarity-card.is-high {
+  border-left-color: var(--yb-danger, #e14d3f);
+}
+
+.duplicate-similarity-card.is-medium {
+  border-left-color: var(--yb-warning, #f2a93b);
+}
+
+.duplicate-similarity-card.is-low {
+  border-left-color: var(--yb-success, #34c26e);
+}
+
+.duplicate-similarity-card strong {
+  color: var(--yb-text, #243047);
+  font-size: 13px;
+}
+
+.duplicate-similarity-score {
+  color: var(--yb-primary, #2174fd);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.duplicate-similarity-meta {
+  color: var(--yb-text-muted, #6d7890);
+  font-size: 12px;
+}
+
+.duplicate-similarity-risk {
+  color: var(--yb-danger, #e14d3f);
+  font-size: 12px;
+  font-style: normal;
+}

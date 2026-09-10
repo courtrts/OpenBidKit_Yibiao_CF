@@ -294,9 +294,35 @@ function DuplicateOutlinePane({ analysis, bidFiles }: { analysis?: DuplicateOutl
     return <div className="duplicate-analysis-empty"><strong>等待目录分析</strong><p>元数据提取完成后会自动开始目录分析。</p></div>;
   }
 
+  // 两两目录相似度是最能一锤定音的结论，此前只在 Excel 里可见——前置到界面顶部
+  const pairwise = (analysis.pairwiseSimilarities || [])
+    .filter((item) => item.risk !== 'none')
+    .sort((left, right) => right.score - left.score);
+  const fileNameById = buildFileLabelMap(bidFiles);
+
   return (
     <div className="duplicate-match-panel">
       <DuplicateFileCodeBar files={bidFiles} />
+      {pairwise.length > 0 && (
+        <div className="duplicate-similarity-cards" role="list" aria-label="目录整体相似度">
+          {pairwise.map((item, index) => (
+            <div
+              key={`${item.file_a_id}-${item.file_b_id}`}
+              role="listitem"
+              className={`duplicate-similarity-card is-${item.risk}`}
+            >
+              <strong>
+                {fileNameById.get(item.file_a_id) || item.file_a_id} × {fileNameById.get(item.file_b_id) || item.file_b_id}
+              </strong>
+              <span className="duplicate-similarity-score">整体相似度 {Math.round(item.score * 100)}%</span>
+              <span className="duplicate-similarity-meta">
+                标题重合 {Math.round(item.title_overlap * 100)}% · 章节路径重合 {Math.round(item.path_overlap * 100)}% · 顺序相似 {Math.round(item.order_similarity * 100)}%
+              </span>
+              {item.risk === 'high' && <em className="duplicate-similarity-risk">疑似高度雷同，建议优先人工复核</em>}
+            </div>
+          ))}
+        </div>
+      )}
       {duplicateGroups.length ? (
         <section className="duplicate-match-card">
           <div className="duplicate-match-card-head">

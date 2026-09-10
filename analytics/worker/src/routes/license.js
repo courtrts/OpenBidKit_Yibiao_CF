@@ -198,6 +198,14 @@ export async function handleOfflineLicense(request, env) {
     return json({ code: 400, message: 'invalid expiresAt' }, { status: 400 });
   }
 
+  // 展示口径与在线激活通道同源：读取项目级 KV 配置，请求体可显式覆盖弹窗行为。
+  let licenseConfig;
+  try {
+    licenseConfig = await readLicenseConfig(env, projectName);
+  } catch {
+    licenseConfig = null;
+  }
+
   const payload = {
     schemaVersion: 1,
     activationMode: 'offline',
@@ -218,9 +226,13 @@ export async function handleOfflineLicense(request, env) {
     keyId: normalizeText(env.LICENSE_KEY_ID || env.YIBIAO_LICENSE_KEY_ID || 'official-build-key-2026-01', 80),
     build: normalizeBuildInfo(null),
     config: {
-      freeLicenseDays: DEFAULT_FREE_LICENSE_DAYS,
-      expirePopupEnabled: normalizeBooleanValue(body.expirePopupEnabled ?? body.expire_popup_enabled, true),
-      expirePopupDismissible: normalizeBooleanValue(body.expirePopupDismissible ?? body.expire_popup_dismissible, true),
+      freeLicenseDays: licenseConfig?.freeLicenseDays || DEFAULT_FREE_LICENSE_DAYS,
+      expirePopupEnabled: licenseConfig
+        ? licenseConfig.expirePopupEnabled !== false
+        : normalizeBooleanValue(body.expirePopupEnabled ?? body.expire_popup_enabled, true),
+      expirePopupDismissible: licenseConfig
+        ? licenseConfig.expirePopupDismissible !== false
+        : normalizeBooleanValue(body.expirePopupDismissible ?? body.expire_popup_dismissible, true),
     },
   };
 

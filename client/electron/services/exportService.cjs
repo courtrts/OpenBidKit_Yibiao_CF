@@ -10,6 +10,10 @@ const { getGeneratedImagesDir, getImportedImagesDir } = require('../utils/paths.
 const { REMOTE_IMAGE_RETRY_ATTEMPTS, REMOTE_IMAGE_RETRY_DELAY_MS } = require('../utils/remoteImageRetry.cjs');
 const { renderMarkdownHtml } = require('../utils/renderMarkdownHtml.cjs');
 const { getLocalImageRenderService } = require('./localImageRenderService.cjs');
+
+// 远程图片单张上限 20MB：超限走单图失败降级（红色占位），防止异常响应拖垮导出
+const EXPORT_IMAGE_MAX_BYTES = 20 * 1024 * 1024;
+const EXPORT_IMAGE_TIMEOUT_MS = 15000;
 const {
   AlignmentType,
   BorderStyle,
@@ -1124,12 +1128,23 @@ async function loadImage(source, context = {}) {
   }
 
   if (/^https?:\/\//i.test(url)) {
-    const response = await fetch(url);
+    // 超时 + 体积上限：对端"已连接不返回"或慢滴 body 时，无上限的 fetch 会让
+    // 单张图片经 3 次重试最坏挂起约 15 分钟（导出假死且不可取消）；超大响应
+    // 全量进内存可 OOM。超限走既有的单图失败降级（红色占位）路径。
+    const response = await fetch(url, { signal: AbortSignal.timeout(EXPORT_IMAGE_TIMEOUT_MS) });
     if (!response.ok) {
       throw new Error(`图片下载失败：${url}`);
     }
+    const declaredLength = Number(response.headers.get('content-length') || '');
+    if (Number.isFinite(declaredLength) && declaredLength > EXPORT_IMAGE_MAX_BYTES) {
+      throw new Error(`图片超过大小限制（${Math.round(EXPORT_IMAGE_MAX_BYTES / 1024 / 1024)}MB）：${url}`);
+    }
     const type = imageTypeFromMime(response.headers.get('content-type')) || imageTypeFromPath(new URL(url).pathname);
-    return { buffer: Buffer.from(await response.arrayBuffer()), type };
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.length > EXPORT_IMAGE_MAX_BYTES) {
+      throw new Error(`图片超过大小限制（${Math.round(EXPORT_IMAGE_MAX_BYTES / 1024 / 1024)}MB）：${url}`);
+    }
+    return { buffer, type };
   }
 
   const fileUrlPrefix = 'file://';

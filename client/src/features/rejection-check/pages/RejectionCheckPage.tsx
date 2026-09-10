@@ -1619,6 +1619,65 @@ function RejectionCheckPage() {
       : findings.filter((finding) => finding.bidDocumentId === activeResultBidDocumentId);
   }
 
+  // 一键复制 Markdown 报告：按当前投标文件筛选导出子集，按文件分组，
+  // 方便直接粘贴进微信群或整改清单。含错别字/废标风险/逻辑谬误三个维度。
+  const copyResultReport = async () => {
+    const rejectionItems = filterFindingsByActiveBid(visibleRejectionFindings);
+    const typoItems = filterFindingsByActiveBid(visibleTypoFindings);
+    const logicItems = filterFindingsByActiveBid(visibleLogicFindings);
+    const total = rejectionItems.length + typoItems.length + logicItems.length;
+    if (!total) {
+      showToast('当前没有可复制的结果', 'info');
+      return;
+    }
+
+    const bidNameById = new Map(bidDocuments.map((document) => [document.id, document.fileName] as const));
+    const bidName = (id: string) => bidNameById.get(id) || '未命名文件';
+    const lines: string[] = [`## 废标项检查报告`, '', `- 风险项：${rejectionItems.length} 条`, `- 疑似错别字：${typoItems.length} 条`, `- 逻辑问题：${logicItems.length} 条`, ''];
+
+    if (rejectionItems.length) {
+      lines.push('### 废标风险项', '');
+      for (const finding of rejectionItems) {
+        lines.push(
+          `- **【${findingSeverityLabels[finding.severity]}·${findingTypeLabels[finding.type]}】${finding.title}**（${bidName(finding.bidDocumentId)}）`,
+        );
+        lines.push(`  - 摘要：${finding.summary}`);
+        lines.push(`  - 检查依据：${finding.requirement}`);
+        lines.push(`  - 投标文件证据：${finding.bidEvidence}`);
+        lines.push(`  - 风险原因：${finding.riskReason}`);
+        if (finding.suggestion) lines.push(`  - 修改建议：${finding.suggestion}`);
+        lines.push('');
+      }
+    }
+
+    if (typoItems.length) {
+      lines.push('### 疑似错别字', '');
+      for (const finding of typoItems) {
+        lines.push(`- **“${finding.wrongText}” → 建议改为“${finding.correctText}”**（${bidName(finding.bidDocumentId)}）`);
+        lines.push(`  - 判断原因：${finding.reason}`);
+        lines.push('');
+      }
+    }
+
+    if (logicItems.length) {
+      lines.push('### 逻辑问题', '');
+      for (const finding of logicItems) {
+        lines.push(`- **${finding.title}**（${bidName(finding.bidDocumentId)}）`);
+        lines.push(`  - 原文与位置：${finding.locationHint}`);
+        lines.push(`  - 谬误原因：${finding.fallacyReason}`);
+        if (finding.suggestion) lines.push(`  - 修改建议：${finding.suggestion}`);
+        lines.push('');
+      }
+    }
+
+    try {
+      await navigator.clipboard.writeText(lines.join('\n'));
+      showToast(`报告已复制（共 ${total} 条），可直接粘贴发给同事`, 'success');
+    } catch {
+      showToast('复制失败，请检查剪贴板权限', 'error');
+    }
+  };
+
   function groupFindingsByBid<T extends { bidDocumentId: string }>(findings: T[]) {
     const filteredFindings = filterFindingsByActiveBid(findings);
     if (activeResultBidDocumentId !== 'all') {
@@ -1833,6 +1892,16 @@ function RejectionCheckPage() {
     ...(step === 'results' ? [{
       id: 'rejection-check-export',
       actions: [{
+        id: 'copy-report',
+        label: '复制报告',
+        variant: 'secondary' as const,
+        disabled: checkRunning || !hasExportableCurrentResult,
+        tooltip: checkRunning
+          ? '请等待当前检查结束后再复制'
+          : '将当前检查结果复制为 Markdown 报告（按当前投标文件筛选）',
+        onClick: () => { void copyResultReport(); },
+      },
+      {
         id: 'export-excel',
         label: exportingExcel ? '导出中...' : '导出 Excel',
         icon: <ToolbarDocumentIcon />,

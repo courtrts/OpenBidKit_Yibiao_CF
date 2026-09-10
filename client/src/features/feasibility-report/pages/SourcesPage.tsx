@@ -18,6 +18,7 @@ function SourcesPage({ sourceFiles, busy, onImport, onRemove }: SourcesPageProps
   const { showDocumentParseNotice } = useDocumentParseNotice();
   const [activeSourceId, setActiveSourceId] = useState(sourceFiles[0]?.id || '');
   const [sourceMarkdown, setSourceMarkdown] = useState('');
+  const [sourceReadState, setSourceReadState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [parserLabel, setParserLabel] = useState('本地解析');
   const activeFile = sourceFiles.find((file) => file.id === activeSourceId) || sourceFiles[0] || null;
   const hasDocumentTabs = sourceFiles.length > 1;
@@ -33,16 +34,25 @@ function SourcesPage({ sourceFiles, busy, onImport, onRemove }: SourcesPageProps
     setActiveSourceId((prev) => (sourceFiles.some((file) => file.id === prev) ? prev : (sourceFiles[0]?.id || '')));
   }, [sourceFiles]);
 
+  // 资料正文读取三态：loading / ready / error。空串（0 字解析结果）与读取失败
+  // 不再伪装成"正在读取"，用户能立刻采取下一步动作。
   useEffect(() => {
     let mounted = true;
     if (!activeFile) {
       setSourceMarkdown('');
+      setSourceReadState('loading');
       return undefined;
     }
+    setSourceReadState('loading');
     window.yibiao?.feasibilityReport.readSourceMarkdown(activeFile.id).then((markdown) => {
-      if (mounted) setSourceMarkdown(markdown || '');
+      if (!mounted) return;
+      setSourceMarkdown(markdown || '');
+      setSourceReadState('ready');
     }).catch((error) => {
-      if (mounted) showToast(error instanceof Error ? error.message : '读取资料失败', 'error');
+      if (!mounted) return;
+      setSourceMarkdown('');
+      setSourceReadState('error');
+      showToast(error instanceof Error ? error.message : '读取资料失败', 'error');
     });
     return () => {
       mounted = false;
@@ -129,10 +139,20 @@ function SourcesPage({ sourceFiles, busy, onImport, onRemove }: SourcesPageProps
           <strong>资料内容</strong>
           <span>{activeFile ? `${activeFile.fileName} · ${activeFile.markdownChars} 字` : '等待上传'}</span>
         </div>
-        {activeFile && sourceMarkdown ? (
+        {activeFile && sourceReadState === 'ready' && sourceMarkdown ? (
           <MarkdownFullscreenViewer title={`${activeFile.fileName}全屏预览`} description="全屏查看当前资料解析出的 Markdown。">
             <MarkdownRenderer allowRawHtml={false}>{sourceMarkdown}</MarkdownRenderer>
           </MarkdownFullscreenViewer>
+        ) : activeFile && sourceReadState === 'ready' ? (
+          <div className="markdown-empty-state">
+            <strong>这份资料的解析结果为空</strong>
+            <p>可能是扫描件或解析器未能识别内容。可回到导入页更换解析方式后重新导入。</p>
+          </div>
+        ) : activeFile && sourceReadState === 'error' ? (
+          <div className="markdown-empty-state">
+            <strong>读取资料正文失败</strong>
+            <p>请稍后重试，或回到导入页重新导入该资料。</p>
+          </div>
         ) : activeFile ? (
           <div className="markdown-empty-state">
             <strong>正在读取资料正文...</strong>

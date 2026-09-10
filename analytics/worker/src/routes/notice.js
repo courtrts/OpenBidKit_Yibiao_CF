@@ -163,12 +163,18 @@ async function handleAdminSaveNotice(request, env) {
       return json({ code: 404, message: 'notice not found' }, { status: 404 });
     }
     try {
+      // 更新分支（有 id）失败时读旧值回写 D1，避免 D1 已换代而 KV 仍是旧公告、
+      // 且 delivered_user_count 被重置的静默分叉（新增分支保持整行回滚）。
+      const previous = id ? await readStoredNotice(env, projectName, id).catch(() => null) : null;
       await writeLatestNotice(env, notice);
     } catch (error) {
       if (!id) {
         await deleteStoredNotice(env, projectName, notice.id).catch(() => undefined);
+      } else if (previous) {
+        await writeLatestNotice(env, previous).catch(() => undefined);
       }
-      throw error;
+      console.error('[analytics] notice KV sync failed', error?.message || String(error));
+      return json({ code: 500, message: 'notice save failed (KV sync)' }, { status: 500 });
     }
     return json({ code: 0, notice: { ...notice, current: true } });
   } catch (error) {

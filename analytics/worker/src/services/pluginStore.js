@@ -378,7 +378,10 @@ async function resolveGitHubPluginOnce(env, repositoryUrl) {
 
 /** 判断 R2 对象是否为完整的目标安装包。 */
 function isCompletePluginPackage(object, expectedSize) {
-  return Boolean(object && object.size > 0 && (!expectedSize || object.size === expectedSize));
+  if (!object || !(object.size > 0)) return false;
+  // 无期望大小（head 失败等）时无法比对外，仅凭非零体积放行（调用侧还有发布后复核）
+  if (!expectedSize) return true;
+  return object.size === expectedSize;
 }
 
 /** 将 GitHub Release 安装包经临时对象校验后发布到正式版本键。 */

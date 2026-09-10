@@ -1564,6 +1564,18 @@ function SettingsPage({ onDeveloperModeChange, registerLeaveGuard }: SettingsPag
   const activeTabDirty = isActiveTabDirty();
 
   // 离开守卫：有未保存修改时拦截切换，由弹窗决定保存/丢弃/取消
+  // 引导条/外部入口要求直落指定设置页签（如模型引导条直落 text-model）
+  useEffect(() => {
+    const open = (event: Event) => {
+      const tab = (event as CustomEvent<{ tab?: string }>).detail?.tab;
+      if (tab && ['general', 'text-model', 'image-model', 'components', 'agent', 'about'].includes(tab)) {
+        setActiveTab(tab as SettingsTab);
+      }
+    };
+    window.addEventListener('yibiao:open-settings-tab', open);
+    return () => window.removeEventListener('yibiao:open-settings-tab', open);
+  }, []);
+
   useEffect(() => {
     registerLeaveGuard?.(async () => {
       if (!activeTabDirty) return true;

@@ -80,7 +80,16 @@ function AppShell({ activeSection, children, developerMode, onSectionChange }: A
                   解析与生成功能需要先在设置中填写模型服务地址与 API Key。
                 </span>
                 <span className="model-ready-banner-actions">
-                  <button type="button" className="primary-action" onClick={() => onSectionChange('settings')}>前往设置</button>
+                  <button
+                  type="button"
+                  className="primary-action"
+                  onClick={() => {
+                    window.dispatchEvent(new CustomEvent('yibiao:open-settings-tab', { detail: { tab: 'text-model' } }));
+                    onSectionChange('settings');
+                  }}
+                >
+                  前往设置
+                </button>
                   <button type="button" className="secondary-action" onClick={dismissModelBanner}>先随便看看</button>
                 </span>
               </div>

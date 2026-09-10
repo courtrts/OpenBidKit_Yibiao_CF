@@ -11,6 +11,12 @@ import {
   writeLatestNotice,
 } from '../services/noticeStore.js';
 import { getRequestClientIp, isValidProjectName, normalizeText, shouldSkipDuplicateWrite } from '../utils.js';
+
+function normalizeBooleanValue(value, defaultValue = true) {
+  if (value === true || value === 'true') return true;
+  if (value === false || value === 'false') return false;
+  return defaultValue;
+}
 import { rejectOversizedBody } from '../http.js';
 
 export async function handlePublicNotice(request, env, url) {
@@ -155,7 +161,7 @@ async function handleAdminSaveNotice(request, env) {
     const notice = await saveStoredNotice(env, {
       id,
       projectName,
-      enabled: body.enabled !== false,
+      enabled: normalizeBooleanValue(body.enabled, true),
       title,
       content,
     });

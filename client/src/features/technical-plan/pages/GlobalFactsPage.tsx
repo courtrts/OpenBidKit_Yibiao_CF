@@ -486,7 +486,9 @@ function GlobalFactsPage({
               className="primary-action"
               onClick={() => {
                 void (async () => {
-                  await saveActiveGroup();
+                  // 保存并切换：仅保存成功时才切换，失败保持弹窗让用户重试
+                  const saved = await saveActiveGroup();
+                  if (!saved) return;
                   if (pendingGroupId) setSelectedGroupId(pendingGroupId);
                   setPendingGroupId(null);
                 })();

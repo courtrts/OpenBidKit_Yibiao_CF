@@ -17,7 +17,9 @@ function templateFromRow(row) {
   return {
     template_id: row.template_id,
     template_name: row.template_name,
-    config: JSON.parse(row.config_json),
+    config: (() => {
+    try { return JSON.parse(row.config_json); } catch { return null; }
+  })(),
     created_at: row.created_at,
     updated_at: row.updated_at,
   };

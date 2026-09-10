@@ -161,8 +161,19 @@ export function shouldSkipDuplicateWrite(key) {
   if (last !== undefined && now - last < RECENT_WRITE_TTL_MS) return true;
   recentWriteKeys.set(key, now);
   if (recentWriteKeys.size > RECENT_WRITE_MAX_KEYS) {
+    // 先清已过期键；高基数攻击下（唯一键大量涌入且均未过期）按插入序强制
+    // 淘汰最旧的一半，保证 Map 有界（误淘汰的代价只是该键 60s 内多计一次）。
     for (const [mapKey, at] of recentWriteKeys) {
       if (now - at >= RECENT_WRITE_TTL_MS) recentWriteKeys.delete(mapKey);
+    }
+    if (recentWriteKeys.size > RECENT_WRITE_MAX_KEYS) {
+      const dropCount = Math.ceil(recentWriteKeys.size / 2);
+      let dropped = 0;
+      for (const mapKey of recentWriteKeys.keys()) {
+        recentWriteKeys.delete(mapKey);
+        dropped += 1;
+        if (dropped >= dropCount) break;
+      }
     }
   }
   return false;

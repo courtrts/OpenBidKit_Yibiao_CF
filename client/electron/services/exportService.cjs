@@ -233,11 +233,12 @@ function loadDeveloperConfig(configStore) {
 }
 
 function sanitizeFilename(value) {
-  return String(value || '标书文档')
-    .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+  return Array.from(String(value || '标书文档')
+    .replace(/[<>:"/\\|?*\x00-\x1F\x7F]/g, '_')
     .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 120) || '标书文档';
+    .trim())
+    .slice(0, 120)
+    .join('') || '标书文档';
 }
 
 function formatExportTimestamp(date = new Date()) {
@@ -1422,7 +1423,9 @@ function hasBlockHtmlChildren($, node) {
   return $(node).contents().toArray().some((child) => ['table', 'ul', 'ol', 'blockquote', 'pre', 'div', 'section', 'article', 'img', 'hr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'].includes(htmlTagName(child)));
 }
 
-async function htmlInlineRuns($, nodes = [], context = {}, marks = {}) {
+const HTML_DOCX_MAX_DEPTH = 50;
+
+async function htmlInlineRuns($, nodes = [], context = {}, marks = {}, depth = 0) {
   // 正文样式作为基础，调用方显式传入的 font/size 覆盖
   if (context.bodyRunFont && !('font' in marks)) {
     marks = { font: context.bodyRunFont, ...marks };
@@ -1442,20 +1445,26 @@ async function htmlInlineRuns($, nodes = [], context = {}, marks = {}) {
       continue;
     }
 
+    // LLM 退化输出可能产生任意深度嵌套标签：超限拍平为纯文本，防递归爆栈
+    if (depth > HTML_DOCX_MAX_DEPTH) {
+      runs.push(textRun($(node).text() || '', marks));
+      continue;
+    }
+
     const tag = htmlTagName(node);
     if (tag === 'br') {
       runs.push(lineBreakRun());
     } else if (tag === 'strong' || tag === 'b') {
-      runs.push(...await htmlInlineRuns($, $(node).contents().toArray(), context, { ...marks, bold: true }));
+      runs.push(...await htmlInlineRuns($, $(node).contents().toArray(), context, { ...marks, bold: true }, depth + 1));
     } else if (tag === 'em' || tag === 'i') {
-      runs.push(...await htmlInlineRuns($, $(node).contents().toArray(), context, { ...marks, italics: true }));
+      runs.push(...await htmlInlineRuns($, $(node).contents().toArray(), context, { ...marks, italics: true }, depth + 1));
     } else if (tag === 'del' || tag === 's' || tag === 'strike') {
-      runs.push(...await htmlInlineRuns($, $(node).contents().toArray(), context, { ...marks, strike: true }));
+      runs.push(...await htmlInlineRuns($, $(node).contents().toArray(), context, { ...marks, strike: true }, depth + 1));
     } else if (tag === 'code') {
       runs.push(new TextRun({ text: cleanText($(node).text()), font: 'Consolas', size: 22, color: '155BD7' }));
     } else if (tag === 'a') {
       const href = $(node).attr('href') || '';
-      const children = await htmlInlineRuns($, $(node).contents().toArray(), context, { ...marks, color: '2174FD', underline: true });
+      const children = await htmlInlineRuns($, $(node).contents().toArray(), context, { ...marks, color: '2174FD', underline: true }, depth + 1);
       if (href) {
         runs.push(new ExternalHyperlink({ link: href, children }));
       } else {
@@ -1689,7 +1698,13 @@ async function htmlHeadingToDocxBlocks($, node, context) {
   return [paragraph(await htmlInlineRuns($, $(node).contents().toArray(), context, runMarks), headingOpts)];
 }
 
-async function htmlNodeToDocxBlocks($, node, context, options = {}) {
+async function htmlNodeToDocxBlocks($, node, context, options = {}, depth = 0) {
+  // 深度超限：拍平为纯文本段落，防 LLM 退化输出的深嵌套 HTML 爆栈
+  if (depth > HTML_DOCX_MAX_DEPTH) {
+    const text = String($(node).text() || '').trim();
+    return text ? [paragraph([textRun(text, context.bodyRunFont ? { font: context.bodyRunFont } : {})])] : [];
+  }
+
   if (node.type === 'text') {
     const text = String(node.data || '').trim();
     if (!text) return [];
@@ -1745,10 +1760,10 @@ async function htmlNodeToDocxBlocks($, node, context, options = {}) {
     return [paragraph([textRun('────────────────────────', { color: 'DCDFF6' })], { alignment: AlignmentType.CENTER })];
   }
   if (['div', 'section', 'article'].includes(tag) && hasBlockHtmlChildren($, node)) {
-    return htmlNodesToDocxBlocks($, $(node).contents().toArray(), context, options);
+    return htmlNodesToDocxBlocks($, $(node).contents().toArray(), context, options, depth + 1);
   }
   if (tag === 'p' && hasBlockHtmlChildren($, node)) {
-    return htmlNodesToDocxBlocks($, $(node).contents().toArray(), context, options);
+    return htmlNodesToDocxBlocks($, $(node).contents().toArray(), context, options, depth + 1);
   }
   if (['p', 'div', 'section', 'article', 'span', 'strong', 'b', 'em', 'i', 'del', 's', 'strike', 'a', 'code', 'label', 'small', 'sub', 'sup', 'mark'].includes(tag)) {
     const isFigureCaption = /^图[:：]/.test($(node).text().trim());
@@ -1772,13 +1787,13 @@ async function htmlNodeToDocxBlocks($, node, context, options = {}) {
   }
 
   addUnsupportedHtmlWarning(context, tag);
-  return htmlNodesToDocxBlocks($, $(node).contents().toArray(), context, options);
+  return htmlNodesToDocxBlocks($, $(node).contents().toArray(), context, options, depth + 1);
 }
 
-async function htmlNodesToDocxBlocks($, nodes = [], context = {}, options = {}) {
+async function htmlNodesToDocxBlocks($, nodes = [], context = {}, options = {}, depth = 0) {
   const blocks = [];
   for (const node of nodes) {
-    blocks.push(...await htmlNodeToDocxBlocks($, node, context, options));
+    blocks.push(...await htmlNodeToDocxBlocks($, node, context, options, depth));
   }
   return blocks;
 }
@@ -1803,8 +1818,18 @@ async function markdownToDocxBlocks(content, context = {}) {
   return htmlToDocxBlocks(html, context);
 }
 
-async function addMarkdownContent(children, content, context) {
-  children.push(...await markdownToDocxBlocks(content, context));
+async function addMarkdownContent(children, content, context, sectionLabel = '') {
+  // 单节降级：一个小节转换异常（如退化 HTML 触发深嵌套/类型异常）不再让
+  // 整篇导出失败——降级为红色警告段落并记入导出警告清单。
+  try {
+    children.push(...await markdownToDocxBlocks(content, context));
+  } catch (error) {
+    const message = error?.message || String(error);
+    addWarning(context, `${sectionLabel || '一个小节'}转换失败，已降级为占位说明（${message.slice(0, 120)}）`);
+    children.push(paragraph([
+      textRun(`【本节内容导出失败，请回到标书正文核对该节（${message.slice(0, 120)}）】`, { color: 'C0392B', size: 22 }),
+    ]));
+  }
 }
 
 const FEASIBILITY_ACCENT = '1A5F7A';
@@ -2047,7 +2072,7 @@ async function addChapterFrameRows(rows, items, context, level = 1) {
     if (useLeafColumns) {
       const bodyChildren = [];
       if (String(item.content || '').trim()) {
-        await addMarkdownContent(bodyChildren, item.content, context);
+        await addMarkdownContent(bodyChildren, item.content, context, item.title || item.itemId);
       } else {
         const pendingParagraph = buildPendingContentModeParagraph(item);
         if (pendingParagraph) bodyChildren.push(pendingParagraph);
@@ -2072,7 +2097,7 @@ async function addChapterFrameRows(rows, items, context, level = 1) {
     if (isLeaf) {
       if (String(item.content || '').trim()) {
         const bodyChildren = [];
-        await addMarkdownContent(bodyChildren, item.content, context);
+        await addMarkdownContent(bodyChildren, item.content, context, item.title || item.itemId);
         rows.push(buildChapterContentRow(context.exportFormat, bodyChildren));
       } else {
         const pendingParagraph = buildPendingContentModeParagraph(item);
@@ -2104,7 +2129,7 @@ async function addOutlineItems(children, items, context, level = 1) {
 
     if (!item.children?.length) {
       if (String(item.content || '').trim()) {
-        await addMarkdownContent(children, item.content, context);
+        await addMarkdownContent(children, item.content, context, item.title || item.itemId);
       } else {
         const pendingParagraph = buildPendingContentModeParagraph(item);
         if (pendingParagraph) children.push(pendingParagraph);

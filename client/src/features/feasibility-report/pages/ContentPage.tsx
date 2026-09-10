@@ -3,7 +3,7 @@ import { MarkdownEditor, MarkdownFullscreenViewer, MarkdownRenderer, ProgressBar
 import type { OutlineData, OutlineItem } from '../../../shared/types';
 import { formatOutlineTitle } from '../../../shared/utils/outlineNumbering';
 import type { ExportFormatConfig } from '../../../shared/types/exportFormat';
-import { DEFAULT_EXPORT_FORMAT } from '../../../shared/types/exportFormat';
+import { withExportFormatDefaults } from '../../export-format/exportFormatNormalize';
 import { buildExportFormatCssVars } from '../../../shared/utils/exportFormatCss';
 import type { FeasibilityBackgroundTaskState } from '../types';
 import { collectFeasibilityLeaves } from '../types';
@@ -101,7 +101,7 @@ function ContentPage({
   const [preview, setPreview] = useState(true);
   const [statsCollapsed, setStatsCollapsed] = useState(false);
   const [pausePending, setPausePending] = useState(false);
-  const [exportFormat, setExportFormat] = useState<ExportFormatConfig>(DEFAULT_EXPORT_FORMAT);
+  const [exportFormat, setExportFormat] = useState<ExportFormatConfig>(() => withExportFormatDefaults(undefined));
   const leaves = useMemo(() => collectFeasibilityLeaves(outlineData?.outline || []), [outlineData]);
   const selectedItem = useMemo(() => {
     const find = (items: OutlineItem[]): OutlineItem | null => {
@@ -171,7 +171,7 @@ function ContentPage({
   useEffect(() => {
     window.yibiao?.config.load()
       .then((config) => {
-        if (config?.export_format) setExportFormat(config.export_format);
+        if (config?.export_format) setExportFormat(withExportFormatDefaults(config.export_format));
       })
       .catch(() => undefined);
   }, []);

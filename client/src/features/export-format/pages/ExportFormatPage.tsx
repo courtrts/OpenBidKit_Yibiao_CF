@@ -1362,16 +1362,18 @@ export function TemplatePreview({ config, previewStyle }: { config: ExportFormat
     transform: `scale(${previewScale})`,
   }), [previewScale, previewStyle]);
 
-  const renderPageHeader = () => (
-    config.page.header_enabled && config.page.header_text.trim() ? (
+  // 对齐 Word titlePg 行为：开启"首页不同"时首页页眉/页脚为空白
+  const isFirstPage = (pageIndex: number) => Boolean(config.page.first_page_different) && pageIndex === 0;
+  const renderPageHeader = (pageIndex: number) => (
+    isFirstPage(pageIndex) || !(config.page.header_enabled && config.page.header_text.trim()) ? null : (
       <div className="export-template-page-header">
         {config.page.header_text.trim()}
       </div>
-    ) : null
+    )
   );
 
   const renderPageFooter = (pageIndex: number) => {
-    if (!showFooterArea) return null;
+    if (!showFooterArea || isFirstPage(pageIndex)) return null;
     const pageNo = Math.max(1, Number(config.page.page_number_start) || 1) + pageIndex;
     const pageNumberText = String(config.page.page_number_format || '第{page}页').replace('{page}', String(pageNo));
 
@@ -1624,7 +1626,7 @@ export function TemplatePreview({ config, previewStyle }: { config: ExportFormat
             {previewPages.map((page, pageIndex) => (
               <div key={pageIndex} className="export-template-preview-page-shell" style={pageShellStyle}>
                 <div className="export-format-paper export-format-preview-content export-template-preview-paper" style={paperStyle}>
-                  {renderPageHeader()}
+                  {renderPageHeader(pageIndex)}
                   <div className="export-template-page-body">
                     {page.map((block) => renderPreviewBlock(block))}
                   </div>
@@ -1637,11 +1639,11 @@ export function TemplatePreview({ config, previewStyle }: { config: ExportFormat
       </div>
       <div className="export-template-preview-measure" ref={measureRef} aria-hidden="true">
         <div className="export-format-paper export-format-preview-content export-template-preview-paper" style={previewStyle}>
-          {renderPageHeader()}
+          {renderPageHeader(1)}
           <div className="export-template-page-body" data-preview-measure-body="true">
             {previewBlocks.map((block) => renderPreviewBlock(block, true))}
           </div>
-          {renderPageFooter(0)}
+          {renderPageFooter(1)}
         </div>
       </div>
     </aside>

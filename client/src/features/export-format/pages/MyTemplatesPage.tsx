@@ -29,7 +29,10 @@ function MyTemplatesPage({ onCreateTemplate, onEditTemplate }: MyTemplatesPagePr
   const [deleting, setDeleting] = useState(false);
 
   const selectedTemplate = templates.find((template) => template.template_id === selectedId) || templates[0] || null;
-  const previewConfig = withExportFormatDefaults(selectedTemplate?.config ?? undefined);
+  const previewConfig = useMemo(
+    () => withExportFormatDefaults(selectedTemplate?.config ?? undefined),
+    [selectedTemplate],
+  );
   const previewStyle = useMemo<CSSProperties>(() => buildExportFormatCssVars(previewConfig), [previewConfig]);
 
   const loadTemplates = useCallback(async () => {

@@ -115,6 +115,7 @@ function FloatingToolbar({ groups, label = '页面工具条' }: FloatingToolbarP
         type="button"
         className="floating-toolbar-drag-handle"
         aria-label="拖动工具条"
+        title="拖动移动位置 · 双击复位"
         onPointerDown={startDrag}
         onPointerMove={drag}
         onPointerUp={stopDrag}

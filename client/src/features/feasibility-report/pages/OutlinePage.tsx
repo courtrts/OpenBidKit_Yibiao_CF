@@ -184,15 +184,20 @@ function OutlinePage({
   };
 
   const persist = async (outline: OutlineItem[], reason: FeasibilitySaveOutlineRequest['reason'], affectedNodeIds?: string[]) => {
-    const numbered = renumberWithMap(outline);
-    await onOutlineSaved({
-      outlineData: { ...(outlineData || { outline: [] }), outline: numbered.outline },
-      reason,
-      idMap: numbered.idMap,
-      affectedNodeIds: affectedNodeIds?.map((id) => numbered.idMap[id] || id),
-    });
-    setSelectedItemId((prev) => (prev ? numbered.idMap[prev] || prev : prev));
-    setExpandedItems((prev) => new Set([...prev].map((id) => numbered.idMap[id] || id)));
+    try {
+      const numbered = renumberWithMap(outline);
+      await onOutlineSaved({
+        outlineData: { ...(outlineData || { outline: [] }), outline: numbered.outline },
+        reason,
+        idMap: numbered.idMap,
+        affectedNodeIds: affectedNodeIds?.map((id) => numbered.idMap[id] || id),
+      });
+      setSelectedItemId((prev) => (prev ? numbered.idMap[prev] || prev : prev));
+      setExpandedItems((prev) => new Set([...prev].map((id) => numbered.idMap[id] || id)));
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '保存大纲失败，请重试', 'error');
+      throw error;
+    }
   };
 
   const saveEditing = async () => {

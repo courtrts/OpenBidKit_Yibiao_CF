@@ -903,7 +903,11 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
       },
     );
     runner({ aiService: runnerAiService, agentService: runnerAgentService, ordinaryAgentService: runnerOrdinaryAgentService, workspaceStore: runnerWorkspaceStore, knowledgeBaseService, openXmlHelperService, updateTask, checkpointTask, payload, taskControl, previousState }).catch((error) => {
-      if (!taskControl.signal.aborted) {
+      // 用户暂停导致 AI 队列作用域拒绝时落 paused 而非 error（与 runner 内部
+      // 显式 catch 同语义，兜底防止 runner 未自行捕获的路径漏到 error 终态）
+      if (error?.code === 'AI_QUEUE_SCOPE_PAUSED') {
+        checkpointTask({ status: 'paused', pause_requested: false, error: '' });
+      } else if (!taskControl.signal.aborted) {
         checkpointTask({ status: 'error', error: error.message || '任务执行失败' });
       }
     }).finally(() => {

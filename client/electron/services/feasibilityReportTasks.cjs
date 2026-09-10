@@ -308,7 +308,8 @@ async function runFeasibilityContentTask({
   const knowledgeMap = loadKnowledgeContentMap(knowledgeBaseService, state.referenceDocumentIds || []);
   const perLeafWords = Math.max(600, Math.round((state.targetWords || 30000) / Math.max(collectLeaves(outline).length, 1)));
   const leaves = () => collectLeaves(outline);
-  const statsSnapshot = () => ({ phase, reviewedNodeIds: [...reviewedNodeIds] });
+  let activeNodeId = '';
+  const statsSnapshot = () => ({ phase, reviewedNodeIds: [...reviewedNodeIds], activeNodeId });
   const workspacePatch = () => ({ outlineData: { ...state.outlineData, outline } });
 
   const persistPaused = (message) => {
@@ -353,6 +354,7 @@ async function runFeasibilityContentTask({
           return;
         }
         const leaf = targets[index];
+        activeNodeId = leaf.id;
         logs = [...logs, `正在撰写：${leaf.title}`];
         lastProgress = contentProgress('generating', index, targets.length);
         updateTask({
@@ -412,6 +414,7 @@ async function runFeasibilityContentTask({
         return;
       }
       const leaf = reviewTargets[index];
+      activeNodeId = leaf.id;
       logs = [...logs, `正在审校：${leaf.title}`];
       lastProgress = contentProgress('human-writing', reviewedNodeIds.length, Math.max(reviewTotal, 1));
       updateTask({

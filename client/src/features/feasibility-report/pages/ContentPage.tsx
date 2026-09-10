@@ -36,11 +36,15 @@ const statusLabels: Record<TreeStatus, string> = {
 
 function getLeafStatus(
   item: OutlineItem,
-  options: { running: boolean; failed: boolean; activeLeafTitle: string },
+  options: { running: boolean; failed: boolean; activeLeafTitle: string; activeNodeId?: string },
 ): TreeStatus {
-  if (options.running && options.activeLeafTitle && item.title === options.activeLeafTitle) return 'running';
+  // 主进程 stats 已带 activeNodeId 时按 id 精确匹配（同名章节不再误标）；
+  // 旧任务无该字段时回退标题匹配。
+  const idMatched = Boolean(options.activeNodeId && item.id === options.activeNodeId);
+  const titleMatched = !options.activeNodeId && Boolean(options.activeLeafTitle) && item.title === options.activeLeafTitle;
+  if (options.running && (idMatched || titleMatched)) return 'running';
   if (item.content?.trim()) return 'success';
-  if (options.failed && options.activeLeafTitle && item.title === options.activeLeafTitle) return 'error';
+  if (options.failed && (idMatched || titleMatched)) return 'error';
   return 'idle';
 }
 
@@ -54,7 +58,7 @@ function getParentStatus(childStatuses: TreeStatus[]): TreeStatus {
 
 function buildOutlineMeta(
   items: OutlineItem[],
-  options: { running: boolean; failed: boolean; activeLeafTitle: string },
+  options: { running: boolean; failed: boolean; activeLeafTitle: string; activeNodeId?: string },
 ) {
   const meta = new Map<string, OutlineNodeMeta>();
 
@@ -147,6 +151,9 @@ function ContentPage({
           ? `已生成 ${generatedCount} / ${leaves.length} 个章节。`
           : '点击右上角“生成正文”后，后台会按叶子章节撰写并自动审校。');
   const activeLeafTitle = latestLog.match(/^正在(?:撰写|审校)：(.+)$/)?.[1] || '';
+  const activeNodeId = (contentTask?.stats && typeof contentTask.stats === 'object'
+    ? (contentTask.stats as { activeNodeId?: string }).activeNodeId
+    : undefined) || '';
   const generationButtonLabel = pausing
     ? '正在暂停中...'
     : running
@@ -160,8 +167,8 @@ function ContentPage({
             : '生成正文';
   const exportFormatPreviewStyle = useMemo<CSSProperties>(() => buildExportFormatCssVars(exportFormat), [exportFormat]);
   const outlineMeta = useMemo(
-    () => buildOutlineMeta(outlineData?.outline || [], { running, failed, activeLeafTitle }),
-    [activeLeafTitle, failed, outlineData, running],
+    () => buildOutlineMeta(outlineData?.outline || [], { running, failed, activeLeafTitle, activeNodeId }),
+    [activeLeafTitle, activeNodeId, failed, outlineData, running],
   );
 
   useEffect(() => {

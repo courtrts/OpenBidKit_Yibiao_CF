@@ -35,8 +35,11 @@ export async function isTrackVersionBlocked(env, projectName, version) {
       versionBlocksCache.set(projectName, entry);
     }
     return entry.versions.has(String(version ?? ''));
-  } catch {
-    return false;
+  } catch (error) {
+    // 与 ipBlockStore 同标准：失败开放是有意设计但必须可观测
+    console.error('[analytics] version block check degraded', error?.message || String(error));
+    const stale = versionBlocksCache.get(projectName);
+    return stale ? stale.versions.has(String(version ?? '')) : false;
   }
 }
 

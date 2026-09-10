@@ -265,7 +265,15 @@ function countWordsCached(content: string): number {
   const cached = wordCountCache.get(content);
   if (cached !== undefined) return cached;
   const words = countWords(content);
-  if (wordCountCache.size > 2000) wordCountCache.clear();
+  if (wordCountCache.size > 2000) {
+    // 淘汰最旧一半（Map 保序），避免大文档下命中率先抖动后趋零
+    let dropped = 0;
+    for (const key of wordCountCache.keys()) {
+      wordCountCache.delete(key);
+      dropped += 1;
+      if (dropped >= 1000) break;
+    }
+  }
   wordCountCache.set(content, words);
   return words;
 }

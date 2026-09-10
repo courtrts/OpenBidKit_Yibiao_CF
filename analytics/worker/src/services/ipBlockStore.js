@@ -25,7 +25,8 @@ export async function loadBlockedIps(env) {
   const now = Date.now();
   if (now - blockedIpsCache.at < BLOCKED_IPS_CACHE_TTL_MS) {
     return blockedIpsCache.ips;
-  }  const result = await requireStatsDb(env).prepare('SELECT ip FROM ip_blocks').all();
+  }
+  const result = await requireStatsDb(env).prepare('SELECT ip FROM ip_blocks').all();
   const ips = (result.results || []).map((row) => String(row.ip || '')).filter(Boolean);
   blockedIpsCache = { at: now, ips };
   return ips;

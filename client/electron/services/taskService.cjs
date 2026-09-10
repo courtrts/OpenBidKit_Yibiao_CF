@@ -1500,13 +1500,17 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
       throw new Error('当前没有正在生成的正文任务。');
     },
     pauseFeasibilityContent() {
-      const task = activeTasks.get('feasibility-content');
-      const control = activeTaskControls.get('feasibility-content');
-      if (task && isActiveTaskStatus(task.status) && control?.requestPause) {
-        if (control.queueScopeId && aiService?.pauseQueueScope) {
-          aiService.pauseQueueScope(control.queueScopeId);
+      // 自然化审校（human-writing）与正文生成共用同一暂停入口：
+      // 哪个任务处于活动态就暂停哪个，托盘与页面两入口由此保持一致承诺。
+      for (const taskType of ['feasibility-content', 'feasibility-human-writing']) {
+        const task = activeTasks.get(taskType);
+        const control = activeTaskControls.get(taskType);
+        if (task && isActiveTaskStatus(task.status) && control?.requestPause) {
+          if (control.queueScopeId && aiService?.pauseQueueScope) {
+            aiService.pauseQueueScope(control.queueScopeId);
+          }
+          return control.requestPause();
         }
-        return control.requestPause();
       }
 
       const report = feasibilityReportStore?.loadFeasibilityReport?.() || {};
@@ -1515,7 +1519,7 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
         return contentTask;
       }
 
-      throw new Error('当前没有正在生成的可研正文任务。');
+      throw new Error('当前没有正在生成的可研正文或审校任务。');
     },
     startRejectionItemsExtraction(payload) {
       return startManagedTask('rejection-items-extraction', payload, runRejectionItemsExtractionTask, payload?.workspaceState || {});

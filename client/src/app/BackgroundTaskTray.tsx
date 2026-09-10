@@ -43,8 +43,9 @@ const TASK_LABEL_BY_TYPE: Record<string, string> = {
 };
 
 const TRAY_STATUSES = new Set(['running', 'pausing', 'paused']);
-// 主进程提供暂停能力的两类任务；其余任务尚无取消/暂停 IPC，不显示暂停按钮
-const PAUSABLE_TASK_TYPES = new Set(['content-generation', 'feasibility-content']);
+// 主进程提供暂停能力的三类任务（自然化审校与正文生成共用 pauseFeasibilityContent）；
+// 其余任务尚无取消/暂停 IPC，不显示暂停按钮
+const PAUSABLE_TASK_TYPES = new Set(['content-generation', 'feasibility-content', 'feasibility-human-writing']);
 const TERMINAL_NOTIFICATION_STATUSES = new Set(['success', 'error']);
 
 interface BackgroundTaskTrayProps {
@@ -143,11 +144,7 @@ function BackgroundTaskTray({ onSectionChange }: BackgroundTaskTrayProps) {
   const pauseTask = useCallback((task: TaskEventTask) => {
     // 发射后不管的请求也要兜住 rejection：暂停失败任务保持运行，托盘状态不会说谎
     const fail = () => console.warn('[background-task-tray] 暂停请求失败');
-    if (task.type === 'content-generation') {
-      window.yibiao.tasks.pauseContentGeneration().catch(fail);
-    } else if (task.type === 'feasibility-content') {
-      window.yibiao.tasks.pauseFeasibilityContent().catch(fail);
-    }
+    window.yibiao.tasks.pauseFeasibilityContent().catch(fail);
   }, []);
 
   const jumpToTask = useCallback(

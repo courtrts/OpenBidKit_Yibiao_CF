@@ -206,10 +206,12 @@ function ContentPage({
     setPausePending(true);
     try {
       await window.yibiao!.tasks.pauseFeasibilityContent();
-      showToast('正在暂停正文生成，当前 AI 请求完成后会停止调度新任务', 'info');
+      showToast(reviewing
+        ? '正在暂停自然化审校，当前 AI 请求完成后会停止调度新任务'
+        : '正在暂停正文生成，当前 AI 请求完成后会停止调度新任务', 'info');
     } catch (error) {
       setPausePending(false);
-      showToast(error instanceof Error ? error.message : '暂停正文生成失败', 'error');
+      showToast(error instanceof Error ? error.message : (reviewing ? '暂停自然化审校失败' : '暂停正文生成失败'), 'error');
     }
   };
 
@@ -387,7 +389,7 @@ function ContentPage({
             </MarkdownFullscreenViewer>
           ) : selectedIsLeaf ? (
             <div className="markdown-empty-state content-generation-empty">
-              <strong>{selectedStatus === 'error' ? (task?.error || '正文生成失败') : selectedStatus === 'running' ? (inReviewPhase ? '正在审校此章节' : '正在生成此章节') : '正文待生成'}</strong>
+              <strong>{selectedStatus === 'error' ? (task?.error || (inReviewPhase ? '自然化审校失败' : '正文生成失败')) : selectedStatus === 'running' ? (inReviewPhase ? '正在审校此章节' : '正在生成此章节') : '正文待生成'}</strong>
               <p>{selectedStatus === 'running'
                 ? '模型返回内容后会显示在这里。'
                 : paused

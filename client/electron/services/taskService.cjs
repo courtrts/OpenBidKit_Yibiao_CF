@@ -707,6 +707,12 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
         return this.pauseRequested;
       },
       requestPause() {
+        // 取消（abort）后到达的暂停请求：checkpointTask 会因 signal.aborted 抛错，
+        // 而 pauseContentGeneration 已先暂停了 AI 队列——这里静默返回当前任务，
+        // 避免 IPC 向用户抛出"后台任务已取消"的莫名错误。
+        if (abortController.signal.aborted) {
+          return currentTask;
+        }
         this.pauseRequested = true;
         const pausedLogs = currentTask.logs?.length
           ? currentTask.logs

@@ -339,7 +339,7 @@ async function runFeasibilityContentTask({
       } else if (targets.length) {
         logs = [...logs, resume ? `继续生成 ${targets.length} 个未完成章节。` : `开始生成 ${targets.length} 个章节正文。`];
       }
-      lastProgress = contentProgress('generating', 0, targets.length || 1);
+      lastProgress = Math.max(lastProgress, contentProgress('generating', 0, targets.length || 1));
       updateTask({ progress: lastProgress, logs, stats: statsSnapshot() });
       if (shouldPause()) {
         persistPaused('正文生成已暂停，可稍后继续。');

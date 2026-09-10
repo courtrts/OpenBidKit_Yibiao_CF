@@ -186,38 +186,40 @@ function GlobalFactsPage({
     setDraftContent(activeGroup.content);
   }, [activeGroup?.id, activeGroup?.title, activeGroup?.content]);
 
-  const saveFacts = async (nextFacts: GlobalFactGroupState[], message = '全局事实已保存') => {
+  const saveFacts = async (nextFacts: GlobalFactGroupState[], message = '全局事实已保存'): Promise<boolean> => {
     if (mutationLocked) {
       showToast(aiAdjustmentRunning
         ? '全局事实正在 AI 调整，请等待结束后再修改'
         : '全局事实设定任务正在运行，请等待任务结束后再修改', 'info');
-      return;
+      return false;
     }
     try {
       setSaving(true);
       await onGlobalFactsSaved(nextFacts);
       showToast(message, 'success');
+      return true;
     } catch (error) {
       showToast(error instanceof Error ? error.message : '保存全局事实失败', 'error');
+      return false;
     } finally {
       setSaving(false);
     }
   };
 
-  const saveActiveGroup = async () => {
-    if (!activeGroup) return;
+  const saveActiveGroup = async (): Promise<boolean> => {
+    if (!activeGroup) return false;
     const title = draftTitle.trim();
     const content = draftContent.trim();
     if (!title || !content) {
       showToast('标题和内容不能为空', 'info');
-      return;
+      return false;
     }
 
-    await saveFacts(globalFacts.map((group) => (
+    return saveFacts(globalFacts.map((group) => (
       group.id === activeGroup.id
         ? { ...group, title, content, updated_at: new Date().toISOString() }
         : group
-    )));
+    )), '已保存事实大项');
   };
 
   const addFactGroup = async () => {

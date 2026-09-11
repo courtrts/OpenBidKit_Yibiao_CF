@@ -1164,6 +1164,15 @@ function createKnowledgeBaseService({ app, aiService, configStore, knowledgeBase
     }
   }
 
+  // 导入/重试解析串行队列：多文件勾选即 N 路并发复制+解析+多段 AI 请求，
+  // 主进程易卡死且易触发上游限流；FIFO 按 1 并发执行，prepareDocument 内部自兜底错误。
+  let preparationChain = Promise.resolve();
+  function enqueuePreparation(run) {
+    const result = preparationChain.then(run);
+    preparationChain = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
   async function prepareDocument(documentId, sourceFilePath, webContents) {
     if (activePreparations.has(documentId)) {
       debugLog(documentId, 'prepare:skip-active');
@@ -2269,7 +2278,7 @@ function createKnowledgeBaseService({ app, aiService, configStore, knowledgeBase
         const savedDocument = knowledgeBaseStore.createDocument(document);
         created.push(savedDocument);
         emitProgress(webContents, savedDocument);
-        prepareDocument(documentId, filePath, webContents);
+        enqueuePreparation(() => prepareDocument(documentId, filePath, webContents));
       }
 
       const skippedNote = skipped.length ? `；已跳过：${skipped.join('、')}` : '';
@@ -2291,7 +2300,7 @@ function createKnowledgeBaseService({ app, aiService, configStore, knowledgeBase
         return { success: false, message: '原始文件不存在，请重新上传', document };
       }
 
-      prepareDocument(documentId, sourcePath, webContents);
+      enqueuePreparation(() => prepareDocument(documentId, sourcePath, webContents));
       return { success: true, message: '已重新开始解析', document: getDocument(documentId) };
     },
 

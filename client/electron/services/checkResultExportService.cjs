@@ -101,6 +101,8 @@ function countDuplicateRows(field, analysis) {
   if (!analysis) return 0;
   if (field === 'metadataAnalysis') return Array.isArray(analysis.rows) ? analysis.rows.length : 0;
   if (field === 'outlineAnalysis') return Array.isArray(analysis.duplicateGroups) ? analysis.duplicateGroups.length : 0;
+  // 文件相似度维度：与「文件相似度」sheet 同源（outlineAnalysis.pairwiseSimilarities）
+  if (field === 'similarityAnalysis') return Array.isArray(analysis.pairwiseSimilarities) ? analysis.pairwiseSimilarities.length : 0;
   if (field === 'contentAnalysis') return Array.isArray(analysis.duplicateSentences) ? analysis.duplicateSentences.length : 0;
   return Array.isArray(analysis.duplicateImages) ? analysis.duplicateImages.length : 0;
 }
@@ -263,6 +265,7 @@ function buildDuplicateWorkbook(state, request, options = {}) {
   const definitions = [
     ['元数据', 'metadataAnalysis'],
     ['目录', 'outlineAnalysis'],
+    ['文件相似度', 'similarityAnalysis'],
     ['正文', 'contentAnalysis'],
     ['图片', 'imageAnalysis'],
   ];
@@ -271,7 +274,8 @@ function buildDuplicateWorkbook(state, request, options = {}) {
     [],
     ['分析维度', '状态', '结果数量', '更新时间', '招标文件', '投标文件', '说明'],
     ...definitions.map(([label, field]) => {
-      const descriptor = selected[field];
+      // 文件相似度与目录共用 outlineAnalysis 源，仅计数字段不同
+      const descriptor = selected[field] || (field === 'similarityAnalysis' ? selected.outlineAnalysis : undefined);
       const count = descriptor.valid ? countDuplicateRows(field, descriptor.source) : 0;
       return [
         label,

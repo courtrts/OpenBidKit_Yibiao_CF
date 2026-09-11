@@ -3,7 +3,8 @@ const MAX_TASK_LOGS = 80;
 function normalizeLogs(logs) {
   const normalized = [];
   for (const value of Array.isArray(logs) ? logs : []) {
-    const message = String(value || '').trim();
+    // 单条截断：任意长错误文本整行落库后会被每次任务读取全量拖回
+    const message = String(value || '').trim().slice(0, 2000);
     if (!message || normalized.at(-1) === message) continue;
     normalized.push(message);
   }
@@ -49,13 +50,17 @@ function createTaskLogStore({ db }) {
     }
 
     const removeCount = current.length - overlap;
-    for (let index = 0; index < removeCount; index += 1) {
-      deleteRow.run(rows[index].id);
-    }
-    const timestamp = createdAt || new Date().toISOString();
-    for (const message of desired.slice(overlap)) {
-      insertRow.run(taskDomain, taskType, taskId, message, timestamp);
-    }
+    // 删+插包在同一事务：checkpoint 频繁执行，中途失败不留半截日志状态
+    const syncTransaction = db.transaction(() => {
+      for (let index = 0; index < removeCount; index += 1) {
+        deleteRow.run(rows[index].id);
+      }
+      const timestamp = createdAt || new Date().toISOString();
+      for (const message of desired.slice(overlap)) {
+        insertRow.run(taskDomain, taskType, taskId, message, timestamp);
+      }
+    });
+    syncTransaction();
   }
 
   // 读取当前任务的有限日志快照，供 Store 组装原有任务对象。

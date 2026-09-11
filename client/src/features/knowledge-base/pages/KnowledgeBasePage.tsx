@@ -1046,7 +1046,12 @@ function KnowledgeBasePage() {
                       </div>
                       <span className={`knowledge-status is-${document.status}`}>{statusLabels[document.status]}</span>
                     </div>
-                    <ProgressBar value={document.progress || 0} label={`处理进度 ${document.progress}%`} />
+                    {/* 排队/未上报进度的文档显示流动条纹，不再伪装成 0% 卡死 */}
+                    <ProgressBar
+                      value={document.progress || 0}
+                      indeterminate={document.status !== 'error' && document.status !== 'success' && !document.progress}
+                      label={`处理进度 ${document.progress}%`}
+                    />
                     <div className="knowledge-document-meta">
                       <span>{document.message}</span>
                       <span>{document.item_count || 0} 条知识</span>

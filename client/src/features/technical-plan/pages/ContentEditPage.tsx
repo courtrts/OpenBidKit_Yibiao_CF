@@ -538,15 +538,18 @@ function ContentEditPage({
               ? `${illustrationGenerationCompleted}/${illustrationGenerationTotal}`
             : `${resolvedCount}/${leaves.length}`;
   const progressPhaseLabel = currentProgressDetail ? currentProgressDetail.phase_label : planning ? '正文编排' : restoring ? '原方案还原' : sectionWordAdjusting ? '小节字数调整' : finalSectionWordAdjusting ? '最终小节复核' : totalWordAdjusting ? '全文字数调整' : contentCorrecting ? '内容矫正' : illustrationPlanning ? '全文图片编排' : illustrationGenerating ? '全文图片生成' : '正文生成';
-  const progressTone = planning
-    ? 'success'
-    : wordAdjusting
-      ? 'warning'
-      : contentCorrecting
-        ? 'sky'
-        : illustrationPlanning || illustrationGenerating
-          ? 'violet'
-          : 'primary';
+  // 失败态显式红色：此前失败与空闲同为蓝色，用户难以察觉任务已失败
+  const progressTone = taskFailed
+    ? 'danger'
+    : planning
+      ? 'success'
+      : wordAdjusting
+        ? 'warning'
+        : contentCorrecting
+          ? 'sky'
+          : illustrationPlanning || illustrationGenerating
+            ? 'violet'
+            : 'primary';
   const progressActive = taskInFlight && (planning || restoring || wordAdjusting || contentCorrecting || illustrationPlanning || illustrationGenerating);
   const progressDescription = taskFailed
     ? taskErrorMessage

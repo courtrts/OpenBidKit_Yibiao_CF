@@ -563,6 +563,30 @@
   background: linear-gradient(90deg, #8b5cf6, var(--yb-primary));
 }
 
+.yb-progress-track.is-danger {
+  background: rgba(220, 68, 55, 0.12);
+}
+
+.yb-progress-track.is-danger > span {
+  background: linear-gradient(90deg, var(--yb-danger, #dc4437), #f87060);
+}
+
+/* 不确定进度：流动条纹动效替代空条，读屏不再误报 0% */
+.yb-progress-track.is-indeterminate > span {
+  width: 34% !important;
+  animation: yb-progress-indeterminate 1.4s ease-in-out infinite;
+}
+
+@keyframes yb-progress-indeterminate {
+  from {
+    transform: translateX(-110%);
+  }
+
+  to {
+    transform: translateX(400%);
+  }
+}
+
 .yb-progress-track.is-active::after {
   position: absolute;
   inset: 0;

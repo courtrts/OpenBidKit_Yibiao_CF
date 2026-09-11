@@ -631,12 +631,17 @@ function renderKnowledgeItemsJson(items) {
   );
 }
 
+// 条目字段长度上限：AI 把 block 原文整段塞进 summary 时若不钳制，
+// 会在匹配/补充阶段随 renderKnowledgeItemsJson 回灌每段 prompt，token 费用成倍放大
+const KNOWLEDGE_ITEM_TITLE_MAX_CHARS = 200;
+const KNOWLEDGE_ITEM_SUMMARY_MAX_CHARS = 2000;
+
 function normalizeCandidateItems(parsed) {
   const items = Array.isArray(parsed) ? parsed : parsed?.items;
   if (!Array.isArray(items)) return [];
   return items.map((item) => ({
-    title: String(item?.title || '').trim(),
-    summary: String(item?.summary || item?.resume || '').trim(),
+    title: String(item?.title || '').trim().slice(0, KNOWLEDGE_ITEM_TITLE_MAX_CHARS),
+    summary: String(item?.summary || item?.resume || '').trim().slice(0, KNOWLEDGE_ITEM_SUMMARY_MAX_CHARS),
   })).filter((item) => item.title && item.summary);
 }
 
@@ -1298,7 +1303,9 @@ function createKnowledgeBaseService({ app, aiService, configStore, knowledgeBase
         debugLog(documentId, 'prepare:reuse-legacy-candidates', { candidate_item_count: candidateItems.length });
       }
       const firstStep = getStep(documentId, 'extract_first_items');
-      if (stepCanReuse(firstStep, Array.isArray(firstItems))) {
+      // 空抽取结果不可复用：AI 返回 {"items":[]} 也会被标 success，若复用空数组，
+      // 重试会永远跳过抽取、在 merge 处反复失败
+      if (stepCanReuse(firstStep, Array.isArray(firstItems) && firstItems.length > 0)) {
         if (!firstStep) knowledgeBaseStore.saveDocumentStep(documentId, 'extract_first_items', { status: 'success', result: { items: firstItems } });
         debugLog(documentId, 'prepare:reuse-first-items', { item_count: firstItems.length });
       } else {
@@ -1390,7 +1397,7 @@ function createKnowledgeBaseService({ app, aiService, configStore, knowledgeBase
       }
 
       const supplementStep = getStep(documentId, 'extract_supplement_items');
-      if (stepCanReuse(supplementStep, Array.isArray(supplementItems))) {
+      if (stepCanReuse(supplementStep, Array.isArray(supplementItems) && supplementItems.length > 0)) {
         if (!supplementStep) knowledgeBaseStore.saveDocumentStep(documentId, 'extract_supplement_items', { status: 'success', result: { items: supplementItems } });
         debugLog(documentId, 'prepare:reuse-supplement-items', { item_count: supplementItems.length });
       } else {
@@ -1954,6 +1961,11 @@ function createKnowledgeBaseService({ app, aiService, configStore, knowledgeBase
               const blockIds = [...new Set(item.block_ids || [])].filter((id) => blockOrder.has(id));
               const ranges = compressBlockIdsToRanges(blockIds, blockOrder);
               if (!ranges.length) return null;
+              // 补漏复述已有条目时按归一标题去重，防止 candidate_item_count 与有效条目数漂移
+              const normalizedTitle = item.title.replace(/\s+/g, '').toLowerCase();
+              if (normalizedTitle && items.some((existing) => String(existing.title || '').replace(/\s+/g, '').toLowerCase() === normalizedTitle)) {
+                return null;
+              }
               const id = nextKnowledgeItemId(items);
               const next = { id, title: item.title, summary: item.summary };
               items.push(next);

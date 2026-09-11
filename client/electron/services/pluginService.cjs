@@ -375,6 +375,17 @@ class PluginService {
             return;
           }
           const file = fs.createWriteStream(zipPath);
+          // 慢速滴流可绕过空闲超时无限写盘：超过 200MB 视为异常流，中止并清理
+          const MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024;
+          let receivedBytes = 0;
+          response.on('data', (chunk) => {
+            receivedBytes += chunk.length;
+            if (receivedBytes > MAX_DOWNLOAD_BYTES) {
+              response.destroy();
+              file.destroy();
+              fail(new Error('插件包超过 200MB 上限，已中止下载'));
+            }
+          });
           response.pipe(file);
           response.on('error', fail);
           file.on('error', fail);

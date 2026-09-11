@@ -237,6 +237,11 @@ function addFeasibilityExportOptions(db) {
   addColumnIfMissing(db, 'feasibility_report_meta', 'export_options_json', 'TEXT');
 }
 
+// 生图清理路径按 generation_asset_url 逐 URL 查询，无索引时随数据量线性放大扫描
+function addTechnicalPlanIllustrationAssetIndex(db) {
+  db.exec('CREATE INDEX IF NOT EXISTS idx_technical_plan_illustration_asset_url ON technical_plan_illustration_items(generation_asset_url)');
+}
+
 function addTechnicalPlanBidSectionOptimization(db) {
   addColumnIfMissing(db, 'technical_plan_meta', 'tender_original_markdown_path', 'TEXT');
   addColumnIfMissing(db, 'technical_plan_meta', 'tender_original_markdown_hash', 'TEXT');
@@ -1470,6 +1475,11 @@ const migrations = [
     version: 24,
     description: '可研报告新增导出选项持久化字段',
     up: addFeasibilityExportOptions,
+  },
+  {
+    version: 25,
+    description: '技术方案生图资产地址索引，加速清理路径引用查询',
+    up: addTechnicalPlanIllustrationAssetIndex,
   },
 ];
 

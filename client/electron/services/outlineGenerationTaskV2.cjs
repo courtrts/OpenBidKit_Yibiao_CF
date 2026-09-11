@@ -291,14 +291,17 @@ function renumberOutline(items, prefix = '') {
   return (items || []).map((item, index) => {
     const id = prefix ? `${prefix}.${index + 1}` : String(index + 1);
     const hasChildren = Array.isArray(item?.children) && item.children.length;
+    // 空标题兜底回填：AI 返回残缺标题时下游正文生成会漏节
+    const title = String(item?.title || '').trim() || `未命名目录 ${id}`;
     const next = {
       id,
-      title: String(item?.title || '').trim(),
+      title,
       description: String(item?.description || '').trim(),
       ...(prefix ? {} : { attr: item?.attr }),
       ...(!prefix && String(item?.branch_id || '').trim() ? { branch_id: String(item.branch_id).trim() } : {}),
       ...(!hasChildren ? {
-        content_mode: item?.content_mode,
+        // 叶子缺 content_mode 时缺省为 other，防止下游按 content_mode 取叶时漏节
+        content_mode: item?.content_mode || 'other',
         ...(item?.content_mode === 'other' && String(item?.content_mode_note || '').trim()
           ? { content_mode_note: String(item.content_mode_note).trim() }
           : {}),
@@ -488,10 +491,12 @@ function buildOutlineReviewContext({ outline, scoreDirectoryPlan, targetLeafCoun
 }
 
 function readJson(content, label) {
+  const text = String(content || '').trim();
   try {
-    return JSON.parse(String(content || '').trim());
+    return JSON.parse(text);
   } catch (error) {
-    throw new Error(`${label}不是合法 JSON：${error?.message || String(error)}`);
+    // 附输出长度便于区分截断与格式漂移
+    throw new Error(`${label}不是合法 JSON（输出 ${text.length} 字符）：${error?.message || String(error)}`);
   }
 }
 

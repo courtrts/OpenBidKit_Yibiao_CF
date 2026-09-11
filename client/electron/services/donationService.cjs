@@ -24,8 +24,10 @@ const defaultState = {
 
 /** 读取并规范化本地打赏提示状态。 */
 function readState(filePath) {
+  let rawState = '';
   try {
-    const value = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    rawState = fs.readFileSync(filePath, 'utf-8');
+    const value = JSON.parse(rawState);
     return {
       ...defaultState,
       accumulatedRuntimeMs: Math.max(0, Number(value.accumulatedRuntimeMs) || 0),
@@ -43,6 +45,10 @@ function readState(filePath) {
         : [],
     };
   } catch {
+    // 状态文件损坏（半截 JSON 等）保留副本供排障，降级重建而不是无迹可循地清零
+    try {
+      if (rawState) fs.writeFileSync(`${filePath}.corrupt-${Date.now()}`, rawState, 'utf-8');
+    } catch { /* 保留失败不影响降级 */ }
     return { ...defaultState };
   }
 }
@@ -105,9 +111,15 @@ function createDonationService({ app, onPrompt, onPaid }) {
   const orderStatusRequests = new Map();
 
   try {
-    donated = Boolean(state.donationMarker)
-      && safeStorage.isEncryptionAvailable()
-      && safeStorage.decryptString(Buffer.from(state.donationMarker, 'base64')) === DONATION_MARKER_TEXT;
+    donated = Boolean(state.donationMarker) && (
+      // 加密标记（safeStorage 可用时的正常路径）
+      (safeStorage.isEncryptionAvailable()
+        && safeStorage.decryptString(Buffer.from(state.donationMarker, 'base64')) === DONATION_MARKER_TEXT)
+      // 明文降级标记：系统凭据不可用时 markDonated 的降级写法，解密失败也能识别
+      || (() => {
+        try { return Buffer.from(state.donationMarker, 'base64').toString('utf-8') === DONATION_MARKER_TEXT; } catch { return false; }
+      })()
+    );
   } catch {
     donated = false;
   }
@@ -149,19 +161,29 @@ function createDonationService({ app, onPrompt, onPaid }) {
     return true;
   };
 
-  /** 写入加密成功标记，并停止当前待支付订单恢复。 */
+  /** 写入成功标记，并停止当前待支付订单恢复。持久化失败不阻塞支付确认与 onPaid。 */
   const markDonated = () => {
     const firstDonation = !donated;
     if (!donated) {
-      if (!safeStorage.isEncryptionAvailable()) {
-        throw new Error('系统安全存储当前不可用，无法保存打赏状态');
+      if (safeStorage.isEncryptionAvailable()) {
+        try {
+          state.donationMarker = safeStorage.encryptString(DONATION_MARKER_TEXT).toString('base64');
+        } catch {
+          // 加密失败降级为明文标记：宁可重复提示也不能让已打赏状态永久丢失
+          state.donationMarker = Buffer.from(DONATION_MARKER_TEXT).toString('base64');
+        }
+      } else {
+        state.donationMarker = Buffer.from(DONATION_MARKER_TEXT).toString('base64');
       }
-      state.donationMarker = safeStorage.encryptString(DONATION_MARKER_TEXT).toString('base64');
       donated = true;
     }
     state.pendingOrders = [];
     checkpointRuntime();
-    persist();
+    try {
+      persist();
+    } catch (error) {
+      console.warn('[donation] 打赏状态持久化失败（内存态已生效）', error?.message || String(error));
+    }
     if (firstDonation) onPaid?.();
   };
 

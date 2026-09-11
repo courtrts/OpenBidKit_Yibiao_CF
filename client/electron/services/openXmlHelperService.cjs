@@ -350,7 +350,8 @@ function createOpenXmlHelperService({ app, configStore } = {}) {
         };
         const onAbort = () => stopAndReject(getAbortError(signal), 'openxml.job.cancelled');
         timer = setTimeout(() => {
-          stopAndReject(new Error('Open XML 助手等待完成超时'), 'openxml.job.timeout');
+          // 常见根因是主程序升级后残留旧版助手（信号格式不匹配被静默忽略），文案给出排查方向
+          stopAndReject(new Error('Open XML 助手等待完成超时（助手版本可能与主程序不匹配，请重新打包或重启应用）'), 'openxml.job.timeout');
         }, timeoutMs);
         pending.set(jobId, { resolve, reject, cleanup });
         signal?.addEventListener?.('abort', onAbort, { once: true });

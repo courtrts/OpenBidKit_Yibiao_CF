@@ -152,7 +152,11 @@ async function captureClip(webContents, clip) {
 // 返回 PNG 的实际像素尺寸。
 function getPngResult(buffer, fallbackWidth, fallbackHeight) {
   const image = nativeImage.createFromBuffer(buffer);
-  const size = image.isEmpty() ? {} : image.getSize();
+  if (image.isEmpty()) {
+    // 损坏/截断的 PNG 静默降级为 fallback 尺寸会被标记 success 永久缓存，必须当作失败
+    throw new Error('页面截图失败：返回的 PNG 无法解码（可能已损坏或被截断）');
+  }
+  const size = image.getSize();
   return {
     buffer,
     width: Math.max(1, Number(size.width) || fallbackWidth),
@@ -734,10 +738,14 @@ function createLocalImageRenderService({ configStore } = {}) {
         }
         const width = Math.min(WORD_FRIENDLY_RENDER_WIDTH, Math.max(1, rawWidth));
         const height = Math.max(1, rawHeight);
-        return await captureFullContent(win.webContents, width, height, {
-          ...options,
-          captureScale: MERMAID_CAPTURE_SCALE,
-        });
+        return await withTimeout(
+          captureFullContent(win.webContents, width, height, {
+            ...options,
+            captureScale: MERMAID_CAPTURE_SCALE,
+          }),
+          HTML_RENDER_TIMEOUT_MS * 2,
+          'Mermaid 截图超时',
+        );
       } finally {
         destroyWindow(win);
       }
@@ -794,13 +802,22 @@ function createLocalImageRenderService({ configStore } = {}) {
           'HTML 布局等待超时',
         );
         const width = Math.max(HTML_DESIGN_WIDTH, Math.ceil(metrics.width || 0));
-        const height = Math.max(1, Math.ceil(metrics.height || 0));
+        // 高度硬上限：失控的超长页面（AI 产出异常 HTML）会让拼接分配 GB 级 Buffer 直接 OOM，
+        // 超限抛错走既有失败/重试通道
+        const MAX_HTML_CAPTURE_HEIGHT = 20000;
+        if (height > MAX_HTML_CAPTURE_HEIGHT) {
+          throw new Error(`HTML 页面高度 ${height}px 超过 ${MAX_HTML_CAPTURE_HEIGHT}px 上限，已中止截图`);
+        }
         const layoutIssues = await probeHtmlLayoutIssues(win.webContents);
         throwIfPaused(options, 'HTML 转图已暂停');
-        const captured = await captureFullContent(win.webContents, width, height, {
-          ...options,
-          captureScale: HTML_CAPTURE_SCALE,
-        });
+        const captured = await withTimeout(
+          captureFullContent(win.webContents, width, height, {
+            ...options,
+            captureScale: HTML_CAPTURE_SCALE,
+          }),
+          HTML_RENDER_TIMEOUT_MS * 2,
+          'HTML 截图超时',
+        );
         return { ...captured, layout_issues: layoutIssues };
       } finally {
         destroyWindow(win);

@@ -160,6 +160,18 @@ function assertMermaidPreviewCompatible(code) {
   if (/^\s*[\u3400-\u9fff][\w\u3400-\u9fff-]*\s*(?:-->|---|==>)/mu.test(normalized)) throw new Error('Mermaid 节点 ID 不能直接使用中文');
 }
 
+// PNG 完整性：文件头魔数 + 尾部 IEND chunk（截断的"半张图"魔数完好但无 IEND）
+const PNG_SIGNATURE_HEX = '89504e470d0a1a0a';
+const PNG_IEND_TAIL_HEX = '49454e44ae426082';
+
+function assertCompletePng(buffer, label) {
+  if (!buffer?.length
+    || buffer.subarray(0, 8).toString('hex') !== PNG_SIGNATURE_HEX
+    || buffer.subarray(-8).toString('hex') !== PNG_IEND_TAIL_HEX) {
+    throw new Error(`${label}：生成的 PNG 不完整（可能被截断），已阻止入库`);
+  }
+}
+
 // 通过本地渲染校验 Mermaid 是否可出图。
 async function validateMermaidRender(code) {
   const normalized = normalizeMermaidCode(code);
@@ -168,6 +180,7 @@ async function validateMermaidRender(code) {
   if (!rendered?.buffer?.length) {
     throw new Error('Mermaid 本地渲染失败：未生成有效图片');
   }
+  assertCompletePng(rendered.buffer, 'Mermaid 本地渲染失败');
 }
 
 function buildMermaidRepairMessages(execution, mermaidPlan, errorMessage, attempt) {
@@ -279,9 +292,10 @@ async function requestHtmlScreenshot(html, onRetry, pauseControl = {}, localImag
       isPauseRequested: pauseControl.isPauseRequested,
       createPauseError: pauseControl.createPauseError,
     });
-    if (!rendered?.buffer?.length || rendered.buffer.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a') {
+    if (!rendered?.buffer?.length || rendered.buffer.subarray(0, 8).toString('hex') !== PNG_SIGNATURE_HEX) {
       throw new Error('HTML 本地转图片失败：未生成有效 PNG');
     }
+    assertCompletePng(rendered.buffer, 'HTML 本地转图片失败');
     return {
       buffer: rendered.buffer,
       width: rendered.width,

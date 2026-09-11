@@ -189,9 +189,18 @@ function registerPluginIpc(ipcMain, app, services) {
     return true;
   });
 
+  // 插件配置窗口加载的是第三方插件 HTML，key 属外部输入层：必须为普通字符串键，
+  // 拒绝 __proto__/constructor/prototype 等原型键（写入会变成原型污染赋值）。
+  const isValidConfigKey = (key) => typeof key === 'string'
+    && key.length > 0 && key.length <= 200
+    && !['__proto__', 'constructor', 'prototype'].includes(key);
+
   // 插件配置读取（供配置窗口使用）
   ipcMain.handle('plugin-config:get', async (event, pluginId, key) => {
     try {
+      if (!isValidConfigKey(key)) {
+        return undefined;
+      }
       const configPath = resolvePluginConfigPath(app, pluginId);
       if (!configPath) {
         console.warn('[plugin-ipc] 非法的插件配置读取请求:', pluginId);
@@ -201,7 +210,7 @@ function registerPluginIpc(ipcMain, app, services) {
       if (!fs.existsSync(configPath)) {
         return undefined;
       }
-      
+
       const data = fs.readFileSync(configPath, 'utf-8');
       const config = JSON.parse(data);
       return config[key];
@@ -214,6 +223,9 @@ function registerPluginIpc(ipcMain, app, services) {
   // 插件配置写入（供配置窗口使用）
   ipcMain.handle('plugin-config:set', async (event, pluginId, key, value) => {
     try {
+      if (!isValidConfigKey(key)) {
+        return false;
+      }
       const configPath = resolvePluginConfigPath(app, pluginId);
       if (!configPath) {
         console.warn('[plugin-ipc] 非法的插件配置写入请求:', pluginId);

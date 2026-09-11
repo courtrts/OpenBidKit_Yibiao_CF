@@ -80,11 +80,16 @@ function registerDeveloperIpc({ configStore, aiService, agentService, openDevelo
 
   ipcMain.handle('developer-agent-monitor:open-workspace', async (_event, workspaceDir) => {
     requireDeveloperMode(configStore);
-    const errorMessage = await shell.openPath(workspaceDir);
+    // 非字符串入参会让 shell.openPath 抛 Electron 原生 TypeError 泄给渲染层，先归一
+    const targetDir = String(workspaceDir || '').trim();
+    if (!targetDir) {
+      return { success: false, message: '工作空间路径为空' };
+    }
+    const errorMessage = await shell.openPath(targetDir);
     if (errorMessage) {
       throw new Error(`打开当前工作空间失败：${errorMessage}`);
     }
-    return { success: true, path: workspaceDir };
+    return { success: true, path: targetDir };
   });
 
   ipcMain.handle('developer-expansion-replace-test:run', (_event, payload) => {

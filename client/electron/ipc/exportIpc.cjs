@@ -5,7 +5,9 @@ const { ipcMain, shell } = require('electron');
 let exportInFlight = false;
 
 function registerExportIpc({ exportService, donationService }) {
-  ipcMain.handle('export:word', async (event, payload = {}) => {
+  ipcMain.handle('export:word', async (event, rawPayload) => {
+    // 渲染层误传 null 时 payload.requestId 会抛原始 TypeError 泄进 UI，先归一为对象
+    const payload = (rawPayload && typeof rawPayload === 'object') ? rawPayload : {};
     if (exportInFlight) {
       return { success: false, message: '已有导出任务正在进行，请稍候再试' };
     }
@@ -22,7 +24,8 @@ function registerExportIpc({ exportService, donationService }) {
       sendProgress({
         phase: 'error',
         progress: 100,
-        message: error.message || '导出 Word 失败',
+        // 原始异常可能携带底层 SDK/HTTP 响应片段，截断后只给渲染层展示用
+        message: String(error.message || '导出 Word 失败').slice(0, 500),
       });
       throw error;
     } finally {

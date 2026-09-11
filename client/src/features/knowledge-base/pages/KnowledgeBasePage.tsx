@@ -423,13 +423,19 @@ function KnowledgeBasePage() {
     }
   }, [viewer?.document.id, viewer?.document.status, viewer?.mode]);
 
+  // 递增序号守卫：上一次未完成的 loadInitialData 在组件卸载/重入后不再回写状态
+  const loadInitialDataSeqRef = useRef(0);
+
   const loadInitialData = async () => {
+    const seq = ++loadInitialDataSeqRef.current;
     try {
       setListLoading(true);
       setLoadError('');
       const config = await window.yibiao?.config.load();
+      if (seq !== loadInitialDataSeqRef.current) return;
       setDeveloperMode(Boolean(config?.developer_mode));
       const data = await window.yibiao?.knowledgeBase.list();
+      if (seq !== loadInitialDataSeqRef.current) return;
       if (data) {
         setIndex(data);
         setActiveFolderId((currentId) => (
@@ -438,11 +444,14 @@ function KnowledgeBasePage() {
       }
     } catch (error) {
       // 失败必须与「还没有文件夹」区分：静默降级为空态会误导用户以为资料被清空
+      if (seq !== loadInitialDataSeqRef.current) return;
       setLoadError(error instanceof Error ? error.message : '读取知识库失败');
       showToast(error instanceof Error ? error.message : '读取知识库失败', 'error');
     } finally {
-      setLoading(false);
-      setListLoading(false);
+      if (seq === loadInitialDataSeqRef.current) {
+        setLoading(false);
+        setListLoading(false);
+      }
     }
   };
 

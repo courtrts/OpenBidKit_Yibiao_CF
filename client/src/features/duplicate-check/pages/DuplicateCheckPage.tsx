@@ -636,6 +636,8 @@ function DuplicateCheckPage() {
   const [exportingExcel, setExportingExcel] = useState(false);
   const [exportedExcelPath, setExportedExcelPath] = useState('');
   const [analyticsReady, setAnalyticsReady] = useState(false);
+  // 水合完成前页面呈现的不是真实状态：不显示上传空态、不触发自动续跑
+  const [hydrated, setHydrated] = useState(false);
   const startedMetadataSignatureRef = useRef<string | null>(null);
   const currentAnalysisSignatureRef = useRef('');
   const hydratedRef = useRef(false);
@@ -670,9 +672,11 @@ function DuplicateCheckPage() {
   const isNextDisabled = activeIndex >= steps.length - 1 || !canGoNext;
   const nextTooltip = activeIndex >= steps.length - 1
     ? '当前已经是最后一步'
-    : canGoNext
-      ? `进入${stepLabels[steps[activeIndex + 1]]}`
-      : '请先上传至少一份投标文件';
+    : !hydrated
+      ? '正在恢复上次进度...'
+      : canGoNext
+        ? `进入${stepLabels[steps[activeIndex + 1]]}`
+        : '请先上传至少一份投标文件';
 
   useEffect(() => {
     if (!analyticsReady) return;
@@ -691,11 +695,15 @@ function DuplicateCheckPage() {
         applyDuplicateCheckState(state);
       })
       .catch((error) => {
-        showToast(error instanceof Error ? error.message : '读取标书查重缓存失败', 'error');
+        // 组件已卸载（快速切页）时不再在已离开的页面上弹错误提示
+        if (!canceled) {
+          showToast(error instanceof Error ? error.message : '读取标书查重缓存失败', 'error');
+        }
       })
       .finally(() => {
         if (!canceled) {
           hydratedRef.current = true;
+          setHydrated(true);
           setAnalyticsReady(true);
         }
       });
@@ -811,15 +819,19 @@ function DuplicateCheckPage() {
   };
 
   useEffect(() => {
+    // 水合完成前不触发自动续跑：否则恢复期间把「空状态」当成「用户刚清空」误启动
+    if (!hydratedRef.current) return;
     if (step !== 'analysis' || !bidFiles.length) return;
     if (metadataAnalysis?.status === 'success'
       && metadataAnalysis.signature
       && outlineAnalysis?.status === 'success'
       && contentAnalysis?.status === 'success'
       && imageAnalysis?.status === 'success') return;
+    // 上次运行失败时不静默重跑全量查重（耗时且消耗 AI 配额），等待用户手动开始
+    if (metadataAnalysis?.status === 'error') return;
     if (startedMetadataSignatureRef.current === currentAnalysisSignature) return;
     startDuplicateAnalysis(false);
-  }, [bidFiles, contentAnalysis?.status, currentAnalysisSignature, imageAnalysis?.status, metadataAnalysis?.signature, metadataAnalysis?.status, outlineAnalysis?.status, showToast, step, tenderFiles]);
+  }, [bidFiles, contentAnalysis?.status, currentAnalysisSignature, hydrated, imageAnalysis?.status, metadataAnalysis?.signature, metadataAnalysis?.status, outlineAnalysis?.status, showToast, step, tenderFiles]);
 
   const selectFiles = async (multiple: boolean, filePaths?: string[]) => {
     const selector = window.yibiao?.file?.selectDuplicateCheckFiles;
@@ -1141,8 +1153,11 @@ function DuplicateCheckPage() {
                   ))}
                 </div>
               ) : (
-                <UploadEmpty title="等待投标文件" hint="至少上传两份投标文件，用于互相比对重复内容。">
-                  <button type="button" className="text-button" onClick={() => void uploadBidFiles()} disabled={busy !== null || isAnalysisRunning}>选择投标文件</button>
+                <UploadEmpty
+                  title={hydrated ? '等待投标文件' : '正在恢复上次进度...'}
+                  hint={hydrated ? '至少上传两份投标文件，用于互相比对重复内容。' : '正在读取上次的文件与分析结果，请稍候。'}
+                >
+                  <button type="button" className="text-button" onClick={() => void uploadBidFiles()} disabled={busy !== null || isAnalysisRunning || !hydrated}>选择投标文件</button>
                 </UploadEmpty>
               )}
             </UploadRow>

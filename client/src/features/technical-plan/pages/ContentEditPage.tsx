@@ -651,8 +651,10 @@ function ContentEditPage({
   }, [firstLeafId, outlineData, selectedItemId]);
 
   useEffect(() => {
+    let canceled = false;
     window.yibiao?.config.load()
       .then((config) => {
+        if (canceled) return;
         setDeveloperMode(Boolean(config.developer_mode));
         setImageModelStatus(config.image_model?.status || 'untested');
         if (config.export_format) {
@@ -660,6 +662,9 @@ function ContentEditPage({
         }
       })
       .catch((error) => console.warn('读取开发者模式失败', error));
+    return () => {
+      canceled = true;
+    };
   }, []);
 
   useEffect(() => {

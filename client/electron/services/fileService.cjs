@@ -68,6 +68,9 @@ function getSelectableExtensions(provider) {
 }
 
 const DEFAULT_MINERU_BASE_URL = 'https://mineru.net';
+// MinerU 全链路 fetch 超时：控制类请求 30s、上传/下载大文件 300s（此前全部无限悬挂）
+const MINERU_FETCH_TIMEOUT_MS = 30000;
+const MINERU_POLL_FETCH_TIMEOUT_MS = 30000;
 
 // 从配置解析 MinerU 服务地址（任意第三方或自部署的兼容服务），非法/缺省回退默认。
 function resolveMineruBaseUrl(config) {
@@ -151,6 +154,7 @@ async function parseWithMineruAgent(filePath, options = {}) {
   const createResponse = await fetch(`${baseUrl}/api/v1/agent/parse/file`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    signal: AbortSignal.timeout(MINERU_FETCH_TIMEOUT_MS),
     body: JSON.stringify({
       file_name: fileName,
       language: 'ch',
@@ -187,9 +191,23 @@ async function pollMineruAgent(taskId, fileName, baseUrl) {
   const startedAt = Date.now();
   const timeoutMs = 300000;
   const intervalMs = 3000;
+  let transientPollErrors = 0;
 
   while (Date.now() - startedAt < timeoutMs) {
-    const response = await fetch(`${baseUrl}/api/v1/agent/parse/${taskId}`);
+    // 已上传成功才开始轮询：单次网络抖动不该让整次解析（已消耗配额）作废，
+    // 容忍连续 3 次瞬时错误；state==='failed' 仍是致命的
+    let response;
+    try {
+      response = await fetch(`${baseUrl}/api/v1/agent/parse/${taskId}`, {
+        signal: AbortSignal.timeout(MINERU_POLL_FETCH_TIMEOUT_MS),
+      });
+    } catch (error) {
+      transientPollErrors += 1;
+      if (transientPollErrors >= 3) throw error;
+      await sleep(intervalMs);
+      continue;
+    }
+    transientPollErrors = 0;
     const result = await response.json();
     if (!response.ok || result.code !== 0) {
       throw new Error(`查询 MinerU-Agent 任务失败：HTTP ${response.status}，${JSON.stringify(result)}`);
@@ -222,6 +240,7 @@ async function parseWithMineruAccurate(filePath, token, options = {}) {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
+    signal: AbortSignal.timeout(MINERU_FETCH_TIMEOUT_MS),
     body: JSON.stringify({
       files: [{ name: fileName, data_id: makeDataId(fileName), is_ocr: true }],
       model_version: 'vlm',
@@ -255,11 +274,23 @@ async function pollMineruAccurate(token, batchId, fileName, baseUrl) {
   const startedAt = Date.now();
   const timeoutMs = 600000;
   const intervalMs = 5000;
+  let transientPollErrors = 0;
 
   while (Date.now() - startedAt < timeoutMs) {
-    const response = await fetch(`${baseUrl}/api/v4/extract-results/batch/${batchId}`, {
-      headers: { Authorization: `Bearer ${token}`, Accept: '*/*' },
-    });
+    // 与 Agent 轮询同款：容忍连续 3 次瞬时网络错误，不白耗已付费的解析
+    let response;
+    try {
+      response = await fetch(`${baseUrl}/api/v4/extract-results/batch/${batchId}`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: '*/*' },
+        signal: AbortSignal.timeout(MINERU_POLL_FETCH_TIMEOUT_MS),
+      });
+    } catch (error) {
+      transientPollErrors += 1;
+      if (transientPollErrors >= 3) throw error;
+      await sleep(intervalMs);
+      continue;
+    }
+    transientPollErrors = 0;
     const result = await response.json();
     if (!response.ok || result.code !== 0) {
       throw new Error(`查询 MinerU 精准解析任务失败：HTTP ${response.status}，${JSON.stringify(result)}`);
@@ -282,14 +313,19 @@ async function pollMineruAccurate(token, batchId, fileName, baseUrl) {
 
 async function uploadFile(fileUrl, filePath) {
   const buffer = await fs.readFile(filePath);
-  const response = await fetch(fileUrl, { method: 'PUT', body: buffer });
+  const response = await fetch(fileUrl, {
+    method: 'PUT',
+    body: buffer,
+    // 大文件给足 5 分钟，但不再无限悬挂
+    signal: AbortSignal.timeout(300000),
+  });
   if (!response.ok) {
     throw new Error(`文件上传失败：HTTP ${response.status}，${await response.text()}`);
   }
 }
 
 async function downloadText(url, fallbackMessage) {
-  const response = await fetch(url);
+  const response = await fetch(url, { signal: AbortSignal.timeout(300000) });
   if (!response.ok) {
     throw new Error(`${fallbackMessage}：HTTP ${response.status}`);
   }
@@ -297,7 +333,7 @@ async function downloadText(url, fallbackMessage) {
 }
 
 async function downloadBuffer(url) {
-  const response = await fetch(url);
+  const response = await fetch(url, { signal: AbortSignal.timeout(300000) });
   if (!response.ok) {
     throw new Error(`下载 MinerU 精准解析结果失败：HTTP ${response.status}`);
   }

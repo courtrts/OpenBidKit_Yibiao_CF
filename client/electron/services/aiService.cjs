@@ -803,8 +803,10 @@ async function parseOrRepairJsonResponseWithConfig(app, config, request, content
         request.signal,
       );
       return normalizeJsonPayload(request, parseJsonContent(repairedContent));
-    } catch {
-      throw new Error(failureMessage);
+    } catch (repairFailure) {
+      // 带上最近一次失败原因（截断），用户与日志才能区分是截断、格式还是提示词问题
+      const reason = String(repairFailure?.message || repairFailure || '未知原因').slice(0, 200);
+      throw new Error(`${failureMessage}（最近一次原因：${reason}）`);
     }
   }
 }
@@ -856,7 +858,8 @@ async function collectJsonResponseWithConfig(app, config, request) {
 
         if (attempt === maxRetries) {
           await emitProgress(request.progressCallback, `${progressLabel}连续 ${totalAttempts} 次校验失败。`);
-          throw new Error(failureMessage);
+          const reason = String(lastError?.message || lastError || '未知原因').slice(0, 200);
+          throw new Error(`${failureMessage}（最近一次原因：${reason}）`);
         }
 
         await emitProgress(request.progressCallback, `${progressLabel}第 ${attempt + 1}/${totalAttempts} 次校验失败，正在重试。`);

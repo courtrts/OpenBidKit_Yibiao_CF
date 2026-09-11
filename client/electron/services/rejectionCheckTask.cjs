@@ -1640,10 +1640,23 @@ async function runRejectionCheckTask({ aiService, workspaceStore, updateTask, ch
 
   let completed = 0;
   const logs = ['开始检查投标文件。'];
+  // 复用判定：上次该子检查 success 且输入签名未变时直接沿用结果，
+  // 重试不再连带重跑已成功的子检查（此前双倍 token 成本的根因）。
+  const isReusableResult = (result, inputSignature) => Boolean(
+    result && result.status === 'success' && result.inputSignature === inputSignature && Array.isArray(result.findings),
+  );
+  const reusable = {
+    rejection: isReusableResult(state.rejectionCheckResult, rejectionInputSignature),
+    typo: isReusableResult(state.typoCheckResult, bidSignature),
+    logic: isReusableResult(state.logicCheckResult, bidSignature),
+  };
+  if (reusable.rejection) { completed += 1; logs.push('废标项检查：上次结果仍有效，直接沿用。'); }
+  if (reusable.typo) { completed += 1; logs.push('错别字检查：上次结果仍有效，直接沿用。'); }
+  if (reusable.logic) { completed += 1; logs.push('逻辑检查：上次结果仍有效，直接沿用。'); }
   const initialPartial = { checkOptions: options };
-  if (runOptions.rejectionCheck) initialPartial.rejectionCheckResult = { ...createRunningResult(rejectionInputSignature, '第一轮：正在分析检查范围。'), findings: [], activeFindingId: undefined };
-  if (runOptions.typoCheck) initialPartial.typoCheckResult = { ...createRunningResult(bidSignature, '正在识别错别字候选。'), findings: [], activeFindingId: undefined };
-  if (runOptions.logicCheck) initialPartial.logicCheckResult = { ...createRunningResult(bidSignature, '正在检查逻辑谬误。'), findings: [], activeFindingId: undefined };
+  if (runOptions.rejectionCheck && !reusable.rejection) initialPartial.rejectionCheckResult = { ...createRunningResult(rejectionInputSignature, '第一轮：正在分析检查范围。'), findings: [], activeFindingId: undefined };
+  if (runOptions.typoCheck && !reusable.typo) initialPartial.typoCheckResult = { ...createRunningResult(bidSignature, '正在识别错别字候选。'), findings: [], activeFindingId: undefined };
+  if (runOptions.logicCheck && !reusable.logic) initialPartial.logicCheckResult = { ...createRunningResult(bidSignature, '正在检查逻辑谬误。'), findings: [], activeFindingId: undefined };
   updateCheckWorkspace(updateTask, checkpointTask, { status: 'running', progress: 5, logs }, initialPartial, true);
 
   function updateOverall(label, partial, persist = false) {
@@ -1689,20 +1702,30 @@ async function runRejectionCheckTask({ aiService, workspaceStore, updateTask, ch
         error: compactLogError(error),
       });
       updateOverall(`${label}失败：${message}`, {
-        [resultKey]: { status: 'error', findings: [], inputSignature, activeFindingId: undefined, error: message, progressMessage: message, updatedAt: now() },
+        [resultKey]: {
+          status: 'error',
+          // 上次成功的结果仍有参考价值：失败覆盖时保留旧 findings 而不是清空，
+          // 用户不至于连旧发现都看不到
+          findings: isReusableResult(state[resultKey], inputSignature) ? state[resultKey].findings : [],
+          inputSignature,
+          activeFindingId: undefined,
+          error: message,
+          progressMessage: message,
+          updatedAt: now(),
+        },
       }, true);
       return { kind, status: 'error', error: message };
     }
   }
 
   const tasks = [];
-  if (runOptions.rejectionCheck) {
+  if (runOptions.rejectionCheck && !reusable.rejection) {
     tasks.push(runOne('rejection', '废标项检查', (onProgress) => runRejectionItemCheck(aiService, { invalidBidAndRejectionItems, customCheckItems, bidDocuments: currentBidDocuments }, onProgress), 'rejectionCheckResult', rejectionInputSignature));
   }
-  if (runOptions.typoCheck) {
+  if (runOptions.typoCheck && !reusable.typo) {
     tasks.push(runOne('typo', '错别字检查', (onProgress) => runTypoCheck(aiService, { bidDocuments: currentBidDocuments }, onProgress), 'typoCheckResult', bidSignature));
   }
-  if (runOptions.logicCheck) {
+  if (runOptions.logicCheck && !reusable.logic) {
     tasks.push(runOne('logic', '逻辑谬误检查', (onProgress) => runLogicCheck(aiService, { bidDocuments: currentBidDocuments }, onProgress), 'logicCheckResult', bidSignature));
   }
 

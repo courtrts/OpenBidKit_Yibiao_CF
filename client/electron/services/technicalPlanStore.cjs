@@ -1704,6 +1704,9 @@ function createTechnicalPlanStore({ app, db, fileService, agentService, taskLogS
     db.prepare('DELETE FROM technical_plan_bid_items').run();
     db.prepare('DELETE FROM technical_plan_reference_docs').run();
     db.prepare('DELETE FROM technical_plan_outline_nodes').run();
+    // 显式清理正文关联表：不完全依赖 ON DELETE CASCADE（pragma 为连接级，漏设即孤儿行）
+    db.prepare('DELETE FROM technical_plan_content_sections').run();
+    db.prepare('DELETE FROM technical_plan_content_plans').run();
     db.prepare('DELETE FROM technical_plan_global_fact_groups').run();
     clearContentIllustrationPlan();
     clearOriginalOutlineRuntime();
@@ -1744,6 +1747,9 @@ function createTechnicalPlanStore({ app, db, fileService, agentService, taskLogS
     db.prepare('DELETE FROM technical_plan_bid_items').run();
     db.prepare('DELETE FROM technical_plan_reference_docs').run();
     db.prepare('DELETE FROM technical_plan_outline_nodes').run();
+    // 显式清理正文关联表：不完全依赖 ON DELETE CASCADE（pragma 为连接级，漏设即孤儿行）
+    db.prepare('DELETE FROM technical_plan_content_sections').run();
+    db.prepare('DELETE FROM technical_plan_content_plans').run();
     db.prepare('DELETE FROM technical_plan_global_fact_groups').run();
     clearContentIllustrationPlan();
     clearOriginalOutlineRuntime();
@@ -2031,6 +2037,9 @@ function createTechnicalPlanStore({ app, db, fileService, agentService, taskLogS
     if (hasOwn(partial, 'outlineData')) {
       if (partial.outlineData === null) {
         db.prepare('DELETE FROM technical_plan_outline_nodes').run();
+        // 整树清空时显式清理正文关联表，防连接 pragma 漏设 foreign_keys 留孤儿行
+        db.prepare('DELETE FROM technical_plan_content_sections').run();
+        db.prepare('DELETE FROM technical_plan_content_plans').run();
         updateMeta({
           outline_project_name: null,
           outline_project_overview: null,
@@ -2715,6 +2724,9 @@ function createTechnicalPlanStore({ app, db, fileService, agentService, taskLogS
       db.prepare('DELETE FROM technical_plan_bid_items').run();
       db.prepare('DELETE FROM technical_plan_reference_docs').run();
       db.prepare('DELETE FROM technical_plan_outline_nodes').run();
+      // 显式清理正文关联表：不完全依赖 ON DELETE CASCADE（pragma 为连接级，漏设即孤儿行）
+      db.prepare('DELETE FROM technical_plan_content_sections').run();
+      db.prepare('DELETE FROM technical_plan_content_plans').run();
       db.prepare('DELETE FROM technical_plan_global_fact_groups').run();
       clearContentIllustrationPlan();
       db.prepare('DELETE FROM technical_plan_meta').run();

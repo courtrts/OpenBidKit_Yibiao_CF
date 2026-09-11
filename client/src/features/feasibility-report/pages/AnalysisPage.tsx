@@ -33,8 +33,13 @@ function AnalysisPage({ analysisMarkdown, task, running, saving, dirty, onChange
       showToast('当前没有可复制的内容', 'info');
       return;
     }
-    await navigator.clipboard.writeText(analysisMarkdown);
-    showToast('资料分析内容已复制', 'success');
+    try {
+      await navigator.clipboard.writeText(analysisMarkdown);
+      showToast('资料分析内容已复制', 'success');
+    } catch {
+      // 剪贴板可能因权限/焦点丢失拒绝写入，必须给出反馈而非静默失败
+      showToast('复制失败，请重试或手动选中内容复制', 'error');
+    }
   };
 
   return (

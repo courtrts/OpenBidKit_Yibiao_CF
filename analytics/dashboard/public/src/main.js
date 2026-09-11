@@ -124,16 +124,27 @@ async function runRefreshActiveTab(options = {}) {
     if (cacheableTabs.has(activeTab)) {
       tabLoadedAt.set(activeTab, Date.now());
     }
+    markPanelStale(activeTab, false);
     setStatus('ok', '已连接');
   } catch (error) {
     setStatus('error', '连接失败');
     setError(error?.message || String(error));
+    // 刷新失败时面板里仍是上次成功加载的内容（可能已因切项目/换筛选过时），
+    // 标记陈旧并作废缓存，避免管理员把旧数据当最新读数、或 60s 内跳过重试。
+    tabLoadedAt.delete(activeTab);
+    markPanelStale(activeTab, true);
   } finally {
     state.refreshButton.disabled = false;
     updateClientsPager();
     updateLatestPager();
     updateIpPager();
   }
+}
+
+// 给当前 Tab 面板加/去过期横幅与降透明度标记（样式见 styles.css 的 .is-stale）。
+function markPanelStale(tab, stale) {
+  const panel = state.tabPanels.find((element) => element.dataset.tabPanel === tab);
+  if (panel) panel.classList.toggle('is-stale', stale);
 }
 
 function bindEvents() {

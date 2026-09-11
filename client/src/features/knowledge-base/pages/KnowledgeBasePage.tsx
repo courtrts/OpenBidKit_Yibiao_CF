@@ -299,6 +299,7 @@ function KnowledgeBasePage() {
   const [index, setIndex] = useState<KnowledgeBaseIndex>(emptyIndex);
   const [activeFolderId, setActiveFolderId] = useState('');
   const [listLoading, setListLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [loading, setLoading] = useState(false);
   const [viewer, setViewer] = useState<KnowledgeViewer | null>(null);
   const [viewerLoading, setViewerLoading] = useState(false);
@@ -425,6 +426,7 @@ function KnowledgeBasePage() {
   const loadInitialData = async () => {
     try {
       setListLoading(true);
+      setLoadError('');
       const config = await window.yibiao?.config.load();
       setDeveloperMode(Boolean(config?.developer_mode));
       const data = await window.yibiao?.knowledgeBase.list();
@@ -435,6 +437,8 @@ function KnowledgeBasePage() {
         ));
       }
     } catch (error) {
+      // 失败必须与「还没有文件夹」区分：静默降级为空态会误导用户以为资料被清空
+      setLoadError(error instanceof Error ? error.message : '读取知识库失败');
       showToast(error instanceof Error ? error.message : '读取知识库失败', 'error');
     } finally {
       setLoading(false);
@@ -939,6 +943,12 @@ function KnowledgeBasePage() {
             <div className="knowledge-empty-box">
               <strong>正在读取知识库...</strong>
               <p>请稍候，正在加载文件夹和文档列表。</p>
+            </div>
+          ) : loadError ? (
+            <div className="knowledge-empty-box">
+              <strong>知识库读取失败</strong>
+              <p>{loadError}</p>
+              <button type="button" className="primary-action" onClick={() => { void loadInitialData(); }}>重试</button>
             </div>
           ) : index.folders.length ? (
             <div className="knowledge-folder-list">

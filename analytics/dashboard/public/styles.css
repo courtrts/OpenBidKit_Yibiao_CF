@@ -1999,3 +1999,21 @@ code {
     width: 100%;
   }
 }
+
+/* 刷新失败时面板内仍是上次成功加载的数据：加过期横幅并降透明度，防止误当最新读数 */
+[data-tab-panel].is-stale::before {
+  content: '以下内容为上次成功加载的结果，刷新失败后可能已过期，请重试';
+  display: block;
+  margin: 0 0 10px;
+  padding: 6px 10px;
+  border: 1px solid #e6a23c;
+  border-radius: 6px;
+  background: #fdf6ec;
+  color: #a8741a;
+  font-size: 12px;
+}
+
+[data-tab-panel].is-stale table,
+[data-tab-panel].is-stale .empty {
+  opacity: 0.6;
+}

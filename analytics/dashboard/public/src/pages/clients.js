@@ -175,15 +175,20 @@ export function setupIpStatsActions() {
   });
 }
 
+// 连续切换时间范围时慢响应会覆盖新选择的结果，序号不匹配的响应直接丢弃。
+let clientDetailSeq = 0;
+
 export async function loadClientDetail() {
   if (!appState.selectedClientId) {
     return;
   }
 
+  const seq = ++clientDetailSeq;
   const { projectName } = getEncodedProjectAndDays();
   const clientId = encodeURIComponent(appState.selectedClientId);
   const range = encodeURIComponent(state.clientDetailRange.value || '7');
   const data = await requestJson(`/api/client-detail?projectName=${projectName}&clientId=${clientId}&range=${range}`);
+  if (seq !== clientDetailSeq) return;
   const daily = (data.daily || []).map((row) => ({
     date: row.date,
     total: formatNumber(row.total),

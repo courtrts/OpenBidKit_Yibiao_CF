@@ -3,6 +3,9 @@ import { escapeHtml, formatNumber } from '../render.js';
 import { appState, state } from '../state.js';
 
 let searchTimer = null;
+// 防抖搜索/翻页按钮各自 fire-and-forget，慢响应会覆盖新筛选的结果；
+// 序号不匹配的响应直接丢弃。
+let modelInfoLoadSeq = 0;
 
 function setModelInfoCacheStatus(message, type = '') {
   state.modelInfoCacheStatus.className = type ? `notice-status ${type}` : 'notice-status';
@@ -138,6 +141,7 @@ function updateModelInfoPager() {
 export async function loadModelInfoCache(options = {}) {
   assertAdminToken();
   saveSettings();
+  const seq = ++modelInfoLoadSeq;
   const params = new URLSearchParams({
     q: state.modelInfoSearch.value.trim(),
     scope: state.modelInfoScope.value,
@@ -145,6 +149,7 @@ export async function loadModelInfoCache(options = {}) {
     pageSize: String(appState.modelInfoPageSize),
   });
   const data = await requestJson(`/api/model-info-cache?${params.toString()}`);
+  if (seq !== modelInfoLoadSeq) return;
   appState.modelInfoModels = data.models || [];
   appState.modelInfoTotal = Number(data.total) || 0;
   appState.modelInfoPage = Number(data.page) || 1;

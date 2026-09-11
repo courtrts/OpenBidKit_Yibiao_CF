@@ -564,8 +564,35 @@ async function replaceMatchesAsync(text, pattern, createReplacement) {
   return parts.join('');
 }
 
-async function parseDocumentWithConfig(app, filePath, config, options = {}) {
-  const startedAt = Date.now();
+// 本地解析缓存：key 为 路径+大小+mtime 的 sha1，命中直接复用原始 markdown。
+// 只存图片改写前的文本；输出超过 5MB 不缓存（读取收益低于占用成本）。
+function localParseCachePath(app, filePath) {
+  let stat = null;
+  try { stat = fs.statSync(filePath); } catch { return null; }
+  const key = crypto.createHash('sha1').update(`${filePath}|${stat.size}|${stat.mtimeMs}`).digest('hex');
+  return path.join(app.getPath('userData'), 'cache', 'parse-cache', `${key}.md`);
+}
+
+async function withLocalParseCache(app, filePath, produce) {
+  let cacheFile = null;
+  try { cacheFile = localParseCachePath(app, filePath); } catch { cacheFile = null; }
+  if (cacheFile && fs.existsSync(cacheFile)) {
+    try {
+      const cached = await fsp.readFile(cacheFile, 'utf-8');
+      if (cached) return cached;
+    } catch { /* 缓存损坏按未命中处理 */ }
+  }
+  const markdown = await produce();
+  if (cacheFile && markdown && markdown.length <= 5 * 1024 * 1024) {
+    try {
+      await fsp.mkdir(path.dirname(cacheFile), { recursive: true });
+      await fsp.writeFile(cacheFile, markdown, 'utf-8');
+    } catch { /* 缓存写入失败不影响解析结果 */ }
+  }
+  return markdown;
+}
+
+async function parseDocumentWithConfig(app, filePath, config, options = {}) {  const startedAt = Date.now();
   const parser = resolveFileParser(config, filePath);
   const developerLogger = createDeveloperLogger({
     app,
@@ -598,7 +625,9 @@ async function parseDocumentWithConfig(app, filePath, config, options = {}) {
     } else if (provider === 'mineru-accurate-api') {
       markdown = await parseWithMineruAccurate(filePath, config.components?.file_parser?.mineru_token || '', parseOptions);
     } else {
-      markdown = await parseLocalDocument(filePath, parseOptions);
+      // 本地解析结果按文件内容指纹缓存：同一份文件反复导入免重复解析（本地解析会阻塞主进程）。
+      // 仅缓存图片改写前的原始 markdown，改写仍按本次运行的资产上下文执行，不带过期引用。
+      markdown = await withLocalParseCache(app, filePath, async () => parseLocalDocument(filePath, parseOptions));
       markdown = preserveImages ? await rewriteMarkdownImages(markdown, assets, { localBaseDir: path.dirname(filePath) }) : stripMarkdownImages(markdown);
     }
   } catch (error) {

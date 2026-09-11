@@ -231,6 +231,12 @@ function addTechnicalPlanGlobalFactsMode(db) {
   addColumnIfMissing(db, 'technical_plan_meta', 'global_facts_mode', "TEXT NOT NULL DEFAULT 'fabricate'");
 }
 
+// 可研报告导出选项（封面/编制说明/附表开关与编制单位、密级、文档号）随工作区持久化，
+// 避免每次重进页面回落默认值、交付前重复填写。
+function addFeasibilityExportOptions(db) {
+  addColumnIfMissing(db, 'feasibility_report_meta', 'export_options_json', 'TEXT');
+}
+
 function addTechnicalPlanBidSectionOptimization(db) {
   addColumnIfMissing(db, 'technical_plan_meta', 'tender_original_markdown_path', 'TEXT');
   addColumnIfMissing(db, 'technical_plan_meta', 'tender_original_markdown_hash', 'TEXT');
@@ -1459,6 +1465,11 @@ const migrations = [
     version: 23,
     description: '新增可行性研究报告工作区表结构',
     up: createFeasibilityReportSchema,
+  },
+  {
+    version: 24,
+    description: '可研报告新增导出选项持久化字段',
+    up: addFeasibilityExportOptions,
   },
 ];
 

@@ -81,6 +81,7 @@ export interface FeasibilityReportState {
   targetWords: number;
   referenceDocumentIds: string[];
   keyParametersMarkdown: string;
+  exportOptions: FeasibilityExportOptions;
   outlineData: OutlineData | null;
   analysisTask?: FeasibilityBackgroundTaskState;
   outlineTask?: FeasibilityBackgroundTaskState;

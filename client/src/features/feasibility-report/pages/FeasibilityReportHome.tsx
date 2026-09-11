@@ -1,5 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { trackPageView } from '../../../shared/analytics/analytics';
 import { AppDialog, AppSwitch, FloatingToolbar, ProgressBar, ToolbarArrowLeftIcon, ToolbarArrowRightIcon, ToolbarDocumentIcon, ToolbarSparkleIcon, useToast } from '../../../shared/ui';
 import type { FloatingToolbarGroup } from '../../../shared/ui';
@@ -63,6 +63,7 @@ const emptyState: FeasibilityReportState = {
   targetWords: 30000,
   referenceDocumentIds: [],
   keyParametersMarkdown: '',
+  exportOptions: DEFAULT_FEASIBILITY_EXPORT_OPTIONS,
   outlineData: null,
 };
 
@@ -78,6 +79,7 @@ function FeasibilityReportHome({ registerLeaveGuard, onSectionChange }: Feasibil
   const [saving, setSaving] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
   const [exportOptions, setExportOptions] = useState<FeasibilityExportOptions>(DEFAULT_FEASIBILITY_EXPORT_OPTIONS);
+  const exportOptionsLoadedRef = useRef(false);
   const [exportTemplateDialogOpen, setExportTemplateDialogOpen] = useState(false);
   const [exportTemplates, setExportTemplates] = useState<ExportTemplateRecord[]>([]);
   const [exportTemplatesLoading, setExportTemplatesLoading] = useState(false);
@@ -159,7 +161,9 @@ function FeasibilityReportHome({ registerLeaveGuard, onSectionChange }: Feasibil
           setDraftProjectInfo(next.projectInfo);
           setAnalysisDraft(next.analysisMarkdown);
           setParametersDraft(next.keyParametersMarkdown);
+          if (next.exportOptions) setExportOptions(next.exportOptions);
         }
+        exportOptionsLoadedRef.current = true;
       } catch (error) {
         if (mounted) {
           showToast(error instanceof Error ? error.message : '读取可研状态失败', 'error');
@@ -191,7 +195,34 @@ function FeasibilityReportHome({ registerLeaveGuard, onSectionChange }: Feasibil
     setDraftProjectInfo(next.projectInfo);
     setAnalysisDraft(next.analysisMarkdown);
     setParametersDraft(next.keyParametersMarkdown);
+    if (next.exportOptions) setExportOptions(next.exportOptions);
   };
+
+  // 导出选项防抖持久化：输入/开关变化 400ms 后落库，切页与重启后不再回落默认值
+  useEffect(() => {
+    if (!exportOptionsLoadedRef.current) return;
+    if (state.exportOptions
+      && state.exportOptions.includeCover === exportOptions.includeCover
+      && state.exportOptions.includePreparationNotes === exportOptions.includePreparationNotes
+      && state.exportOptions.includeAppendixTables === exportOptions.includeAppendixTables
+      && state.exportOptions.preparationUnit === exportOptions.preparationUnit
+      && state.exportOptions.securityLevel === exportOptions.securityLevel
+      && state.exportOptions.documentCode === exportOptions.documentCode) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void window.yibiao?.feasibilityReport.saveExportOptions(exportOptions)
+        .then((next) => {
+          if (!cancelled) setState(next);
+        })
+        .catch((error) => showToast(error instanceof Error ? error.message : '保存导出选项失败', 'error'));
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+    // state.exportOptions 参与比较以在保存回写后收敛，不再触发下一次保存
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exportOptions, state.exportOptions]);
 
   const persistProjectInfoIfNeeded = async () => {
     if (sameProjectInfo(draftProjectInfo, state.projectInfo)) {

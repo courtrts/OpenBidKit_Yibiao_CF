@@ -143,6 +143,7 @@ const workspaceDatabaseChannels = [
   'feasibility-report:read-combined-source-markdown',
   'feasibility-report:update-step',
   'feasibility-report:save-project-info',
+  'feasibility-report:save-export-options',
   'feasibility-report:save-analysis',
   'feasibility-report:save-outline-config',
   'feasibility-report:save-outline',

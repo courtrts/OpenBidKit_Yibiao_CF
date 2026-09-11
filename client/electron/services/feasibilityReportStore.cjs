@@ -40,6 +40,14 @@ const emptyProjectInfo = Object.freeze({
   totalInvestment: '',
   fundingSource: '',
 });
+const emptyExportOptions = Object.freeze({
+  includeCover: true,
+  includePreparationNotes: true,
+  includeAppendixTables: true,
+  preparationUnit: '可行性研究报告编制中心',
+  securityLevel: '内部资料 / 普通',
+  documentCode: '',
+});
 
 function now() {
   return new Date().toISOString();
@@ -109,6 +117,18 @@ function normalizeProjectInfo(value) {
 
 function normalizeDocumentIds(value) {
   return [...new Set((Array.isArray(value) ? value : []).map((item) => String(item || '').trim()).filter(Boolean))];
+}
+
+function normalizeExportOptions(value) {
+  const source = value && typeof value === 'object' ? value : {};
+  return {
+    includeCover: source.includeCover !== false,
+    includePreparationNotes: source.includePreparationNotes !== false,
+    includeAppendixTables: source.includeAppendixTables !== false,
+    preparationUnit: String(source.preparationUnit || '').trim() || emptyExportOptions.preparationUnit,
+    securityLevel: String(source.securityLevel || '').trim() || emptyExportOptions.securityLevel,
+    documentCode: String(source.documentCode || '').trim(),
+  };
 }
 
 function normalizeOutlineSaveReason(value) {
@@ -244,6 +264,7 @@ function createFeasibilityReportStore({ app, db, fileService, taskLogStore, agen
         key_parameters_markdown = @key_parameters_markdown,
         outline_project_name = @outline_project_name,
         outline_project_overview = @outline_project_overview,
+        export_options_json = @export_options_json,
         updated_at = @updated_at
       WHERE id = 1
     `).run(next);
@@ -467,6 +488,7 @@ function createFeasibilityReportStore({ app, db, fileService, taskLogStore, agen
       targetWords: normalizeTargetWords(meta.target_words),
       referenceDocumentIds: normalizeDocumentIds(safeJsonParse(meta.reference_document_ids_json, [])),
       keyParametersMarkdown: String(meta.key_parameters_markdown || ''),
+      exportOptions: normalizeExportOptions(safeJsonParse(meta.export_options_json, emptyExportOptions)),
       outlineData: loadOutlineData(meta),
       ...tasks,
     };
@@ -483,6 +505,7 @@ function createFeasibilityReportStore({ app, db, fileService, taskLogStore, agen
       if (hasOwn(partial, 'targetWords')) metaPatch.target_words = normalizeTargetWords(partial.targetWords);
       if (hasOwn(partial, 'referenceDocumentIds')) metaPatch.reference_document_ids_json = jsonOrNull(normalizeDocumentIds(partial.referenceDocumentIds));
       if (hasOwn(partial, 'keyParametersMarkdown')) metaPatch.key_parameters_markdown = partial.keyParametersMarkdown ? String(partial.keyParametersMarkdown) : null;
+      if (hasOwn(partial, 'exportOptions')) metaPatch.export_options_json = JSON.stringify(normalizeExportOptions(partial.exportOptions));
       if (Object.keys(metaPatch).length) updateMeta(metaPatch);
       if (hasOwn(partial, 'outlineData')) saveOutlineData(partial.outlineData);
       for (const [field, type] of Object.entries(TASK_FIELD_TYPES)) {
@@ -512,6 +535,11 @@ function createFeasibilityReportStore({ app, db, fileService, taskLogStore, agen
       if (options.clearDownstream) clearDownstreamFromMaterials();
     });
     transaction();
+    return loadFeasibilityReport();
+  }
+
+  function saveExportOptions(exportOptions) {
+    updateMeta({ export_options_json: JSON.stringify(normalizeExportOptions(exportOptions)) });
     return loadFeasibilityReport();
   }
 
@@ -713,6 +741,7 @@ function createFeasibilityReportStore({ app, db, fileService, taskLogStore, agen
     updateFeasibilityReportWithoutReload,
     updateStep,
     saveProjectInfo,
+    saveExportOptions,
     saveAnalysis,
     saveOutlineConfig,
     saveOutline,

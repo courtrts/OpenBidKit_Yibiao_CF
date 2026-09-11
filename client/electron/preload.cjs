@@ -212,6 +212,7 @@ const bridge = {
     readCombinedSourceMarkdown: () => invoke('feasibility-report:read-combined-source-markdown'),
     updateStep: (step) => invoke('feasibility-report:update-step', step),
     saveProjectInfo: (projectInfo) => invoke('feasibility-report:save-project-info', projectInfo),
+    saveExportOptions: (exportOptions) => invoke('feasibility-report:save-export-options', exportOptions),
     saveAnalysis: (markdown) => invoke('feasibility-report:save-analysis', markdown),
     saveOutlineConfig: (payload) => invoke('feasibility-report:save-outline-config', payload),
     saveOutline: (payload) => invoke('feasibility-report:save-outline', payload),

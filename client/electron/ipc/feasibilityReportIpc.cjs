@@ -8,6 +8,7 @@ function registerFeasibilityReportIpc({ feasibilityReportStore, taskService }) {
   ipcMain.handle('feasibility-report:read-combined-source-markdown', () => feasibilityReportStore.readCombinedSourceMarkdown());
   ipcMain.handle('feasibility-report:update-step', (_event, step) => feasibilityReportStore.updateStep(step));
   ipcMain.handle('feasibility-report:save-project-info', (_event, projectInfo) => taskService.saveFeasibilityProjectInfo(projectInfo));
+  ipcMain.handle('feasibility-report:save-export-options', (_event, exportOptions) => feasibilityReportStore.saveExportOptions(exportOptions));
   ipcMain.handle('feasibility-report:save-analysis', (_event, markdown) => taskService.saveFeasibilityAnalysis(markdown));
   ipcMain.handle('feasibility-report:save-outline-config', (_event, payload) => feasibilityReportStore.saveOutlineConfig(payload));
   ipcMain.handle('feasibility-report:save-outline', (_event, payload) => taskService.saveFeasibilityOutline(payload));

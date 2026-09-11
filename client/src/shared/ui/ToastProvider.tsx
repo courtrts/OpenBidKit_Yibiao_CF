@@ -1,7 +1,7 @@
 import * as Toast from '@radix-ui/react-toast';
 import { createContext, useCallback, useContext, useMemo, useReducer, type ReactNode } from 'react';
 
-export type ToastType = 'success' | 'error' | 'info';
+export type ToastType = 'success' | 'error' | 'warning' | 'info';
 
 export interface ToastAction {
   label: string;
@@ -47,10 +47,11 @@ let toastId = 0;
 const toastTitleMap: Record<ToastType, string> = {
   success: '完成',
   error: '出错了',
+  warning: '注意',
   info: '提示',
 };
 
-const getToastDuration = (type: ToastType) => (type === 'error' ? 5000 : 2000);
+const getToastDuration = (type: ToastType) => (type === 'error' ? 5000 : type === 'warning' ? 4000 : 2000);
 const persistentToastDuration = 2147483647;
 
 const initialToastState: ToastState = {

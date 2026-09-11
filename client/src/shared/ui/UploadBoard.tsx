@@ -1,4 +1,5 @@
 import { useRef, useState, type DragEvent, type ReactNode } from 'react';
+import { useToast } from './ToastProvider';
 
 export interface UploadBoardProps {
   /** 标题上方的步骤标签，例如 STEP 01 */
@@ -47,6 +48,7 @@ export interface UploadRowProps {
 /** 单个上传行：序号标签 + 内容区（文件胶囊/空态）+ 操作按钮 */
 export function UploadRow({ index, title, note, actions, children, className, onDropFiles, dropDisabled = false }: UploadRowProps) {
   const [dragOver, setDragOver] = useState(false);
+  const { showToast } = useToast();
   // 计数进入/离开次数，避免拖过子元素时高亮闪烁
   const dragDepthRef = useRef(0);
   const droppable = Boolean(onDropFiles) && !dropDisabled;
@@ -79,6 +81,9 @@ export function UploadRow({ index, title, note, actions, children, className, on
     setDragOver(false);
     if (event.dataTransfer.files.length > 0) {
       onDropFiles?.(event.dataTransfer.files);
+    } else {
+      // 拖入文件夹/无效内容：拖入时已高亮，松手静默无响应会让人以为卡死
+      showToast('不支持拖入文件夹，请选择文件后上传', 'warning');
     }
   };
 

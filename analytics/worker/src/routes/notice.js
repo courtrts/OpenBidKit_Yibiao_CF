@@ -7,6 +7,7 @@ import {
   listProjectNotices,
   readProjectNotice,
   readStoredNotice,
+  restoreStoredNotice,
   saveStoredNotice,
   writeLatestNotice,
 } from '../services/noticeStore.js';
@@ -158,6 +159,9 @@ async function handleAdminSaveNotice(request, env) {
   }
 
   try {
+    // 快照更新前的旧行：KV 写失败时用于把 D1 恢复回旧 client_notice_id 与送达计数
+    //（若在 saveStoredNotice 之后才读，读到的已是新值，补偿形同虚设）。
+    const previous = id ? await readStoredNotice(env, projectName, id).catch(() => null) : null;
     const notice = await saveStoredNotice(env, {
       id,
       projectName,
@@ -169,14 +173,14 @@ async function handleAdminSaveNotice(request, env) {
       return json({ code: 404, message: 'notice not found' }, { status: 404 });
     }
     try {
-      // 更新分支（有 id）失败时读旧值回写 D1，避免 D1 已换代而 KV 仍是旧公告、
+      // 更新分支（有 id）失败时恢复旧行并回写 KV，避免 D1 已换代而 KV 仍是旧公告、
       // 且 delivered_user_count 被重置的静默分叉（新增分支保持整行回滚）。
-      const previous = id ? await readStoredNotice(env, projectName, id).catch(() => null) : null;
       await writeLatestNotice(env, notice);
     } catch (error) {
       if (!id) {
         await deleteStoredNotice(env, projectName, notice.id).catch(() => undefined);
       } else if (previous) {
+        await restoreStoredNotice(env, previous).catch(() => undefined);
         await writeLatestNotice(env, previous).catch(() => undefined);
       }
       console.error('[analytics] notice KV sync failed', error?.message || String(error));
@@ -197,17 +201,17 @@ async function handleAdminDeleteNotice(env, url) {
   }
 
   try {
-    const [notice, currentNotice] = await Promise.all([
-      readStoredNotice(env, projectName, id),
-      readProjectNotice(env, projectName),
-    ]);
+    const notice = await readStoredNotice(env, projectName, id);
     if (!notice) {
       return json({ code: 404, message: 'notice not found' }, { status: 404 });
     }
-    if (currentNotice?.id === notice.clientNoticeId) {
+    // 先删 D1 行，再依据删除后的最新 current 决定是否清 KV：
+    // 避免基于并发保存前的旧快照判定误删新公告的 KV，或 KV 先删后 D1 失败留下「可见却取不到」的分叉。
+    await deleteStoredNotice(env, projectName, id);
+    const remaining = await readProjectNotice(env, projectName).catch(() => null);
+    if (!remaining) {
       await env.NOTICE_STORE.delete(buildNoticeKey(projectName));
     }
-    await deleteStoredNotice(env, projectName, id);
     return json({ code: 0, notice: null });
   } catch (error) {
     console.error('[analytics] delete notice failed', error?.message || String(error));

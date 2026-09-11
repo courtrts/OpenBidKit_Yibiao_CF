@@ -935,7 +935,7 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
       controls.push(control);
       control.cancel(reason);
     }
-    await Promise.all(controls.map((control) => control.waitForSettlement()));
+    await waitForSettlementWithTimeout(controls);
   }
 
   // 取消废标检查任务并等待退出，避免清空下游后旧任务继续提交 checkpoint。
@@ -950,7 +950,7 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
       controls.push(control);
       control.cancel(reason);
     }
-    await Promise.all(controls.map((control) => control.waitForSettlement()));
+    await waitForSettlementWithTimeout(controls);
   }
 
   async function cancelFeasibilityReportTasks(reason, taskTypes) {
@@ -964,7 +964,18 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
       controls.push(control);
       control.cancel(reason);
     }
-    await Promise.all(controls.map((control) => control.waitForSettlement()));
+    await waitForSettlementWithTimeout(controls);
+  }
+
+  // runner 挂起（AI 请求无超时、子进程被杀软阻断）时 waitForSettlement 可能永不兑现，
+  // 若无限等待，重置/导入的 IPC 永不返回、目标文件被旧任务持续写入；
+  // 兜底超时后继续执行清理，代价是极端场景下任务终态事件晚到一次事件循环。
+  function waitForSettlementWithTimeout(controls, timeoutMs = 15000) {
+    if (!controls.length) return Promise.resolve();
+    const settlements = Promise.all(controls.map((control) => control.waitForSettlement()));
+    let timer;
+    const timeout = new Promise((resolve) => { timer = setTimeout(resolve, timeoutMs); });
+    return Promise.race([settlements, timeout]).finally(() => clearTimeout(timer));
   }
 
   function recoverInterruptedContentGenerationTask(technicalPlan) {

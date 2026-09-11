@@ -58,8 +58,21 @@ function saveMermaidCacheImage(app, hash, buffer) {
   fs.mkdirSync(cacheDir, { recursive: true });
   const filePath = getMermaidCacheFilePath(app, hash);
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(tempPath, Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer));
-  fs.renameSync(tempPath, filePath);
+  try {
+    fs.writeFileSync(tempPath, Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer));
+    // Windows 下目标 png 可能正被渲染进程经 yibiao-asset 协议读取或被杀软占用导致 rename 失败，
+    // 失败时必须清掉残留 tmp（该目录不在存储清理范围内，否则永久累积）；重试一次再放弃。
+    try {
+      fs.renameSync(tempPath, filePath);
+    } catch {
+      fs.rmSync(tempPath, { force: true });
+      fs.writeFileSync(tempPath, Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer));
+      fs.renameSync(tempPath, filePath);
+    }
+  } catch (error) {
+    fs.rmSync(tempPath, { force: true });
+    throw error;
+  }
   return {
     filePath,
     assetUrl: getMermaidCacheAssetUrl(hash),

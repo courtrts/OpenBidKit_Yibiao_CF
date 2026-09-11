@@ -1,7 +1,6 @@
 import { internalErrorMessage, json, methodNotAllowed, rejectOversizedBody, requireAdmin, unauthorized } from '../http.js';
-import { readLicenseConfig, saveLicenseConfig } from '../services/licenseStore.js';
+import { normalizeLicenseConfig, readLicenseConfig, saveLicenseConfig } from '../services/licenseStore.js';
 import { signPayload, verifySignedObject } from '../services/licenseCrypto.js';
-import { DEFAULT_FREE_LICENSE_DAYS } from '../constants.js';
 import { isValidProjectName, normalizeText } from '../utils.js';
 
 const LICENSE_PLANS = new Set(['free', 'personal_premium', 'enterprise_premium']);
@@ -22,6 +21,17 @@ function normalizeBooleanValue(value, defaultValue = true) {
   if (value === true || value === 'true') return true;
   if (value === false || value === 'false') return false;
   return defaultValue;
+}
+
+// 双通道（在线激活/离线签发）统一的配置兜底：KV 故障时返回与 readLicenseConfig
+// 完全相同的归一默认值，绝不采信请求体——否则同一请求在 KV 健康/故障两种状态下
+// 会签出弹窗开关语义不同的授权。
+async function resolveLicenseConfigOrDefaults(env, projectName) {
+  try {
+    return await readLicenseConfig(env, projectName);
+  } catch {
+    return normalizeLicenseConfig({ projectName }, projectName);
+  }
 }
 
 function normalizeExpiresAt(value) {
@@ -198,13 +208,8 @@ export async function handleOfflineLicense(request, env) {
     return json({ code: 400, message: 'invalid expiresAt' }, { status: 400 });
   }
 
-  // 展示口径与在线激活通道同源：读取项目级 KV 配置，请求体可显式覆盖弹窗行为。
-  let licenseConfig;
-  try {
-    licenseConfig = await readLicenseConfig(env, projectName);
-  } catch {
-    licenseConfig = null;
-  }
+  // 展示口径与在线激活通道同源：统一读取项目级 KV 配置，故障时回落归一默认值。
+  const licenseConfig = await resolveLicenseConfigOrDefaults(env, projectName);
 
   const payload = {
     schemaVersion: 1,
@@ -226,13 +231,9 @@ export async function handleOfflineLicense(request, env) {
     keyId: normalizeText(env.LICENSE_KEY_ID || env.YIBIAO_LICENSE_KEY_ID || 'official-build-key-2026-01', 80),
     build: normalizeBuildInfo(null),
     config: {
-      freeLicenseDays: licenseConfig?.freeLicenseDays || DEFAULT_FREE_LICENSE_DAYS,
-      expirePopupEnabled: licenseConfig
-        ? licenseConfig.expirePopupEnabled !== false
-        : normalizeBooleanValue(body.expirePopupEnabled ?? body.expire_popup_enabled, true),
-      expirePopupDismissible: licenseConfig
-        ? licenseConfig.expirePopupDismissible !== false
-        : normalizeBooleanValue(body.expirePopupDismissible ?? body.expire_popup_dismissible, true),
+      freeLicenseDays: licenseConfig.freeLicenseDays,
+      expirePopupEnabled: licenseConfig.expirePopupEnabled !== false,
+      expirePopupDismissible: licenseConfig.expirePopupDismissible !== false,
     },
   };
 

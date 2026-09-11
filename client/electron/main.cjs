@@ -82,7 +82,9 @@ async function checkBlockedIpAfterStartup() {
     const clientIp = typeof data?.clientIp === 'string' ? data.clientIp.trim().toLowerCase() : '';
     if (data?.code !== 0 || !clientIp || !Array.isArray(data.blockedIps)) return;
     const blocked = data.blockedIps.some((ip) => typeof ip === 'string' && ip.trim().toLowerCase() === clientIp);
-    if (blocked) process.exit(0);
+    // 走 app.quit() 的 before-quit 清理流程：运行中任务的 checkpoint/SQLite 得以落盘，
+    // GPU 探测定时器被清理，避免残留 pending 探测文件导致下次启动被误判为 GPU 异常。
+    if (blocked) app.quit();
   } catch {}
 }
 

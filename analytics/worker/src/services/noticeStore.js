@@ -139,6 +139,32 @@ export async function saveStoredNotice(env, input) {
   return normalizeAdminNoticeRow(row);
 }
 
+// KV 同步失败时把更新前的旧行原样写回 D1（含旧 client_notice_id 与送达计数），
+// 使 KV 中仍在投递的旧公告与 D1 重新对齐，客户端送达上报不再 404。
+export async function restoreStoredNotice(env, previous) {
+  if (!previous?.id || !previous?.projectName) {
+    return null;
+  }
+  const row = await requireResourceDb(env).prepare(
+    `UPDATE notices
+     SET client_notice_id = ?, title = ?, content = ?, enabled = ?,
+       delivered_user_count = ?, updated_at = ?
+     WHERE project_name = ? AND id = ?
+     RETURNING id, client_notice_id, project_name, title, content, enabled,
+       delivered_user_count, created_at, updated_at`,
+  ).bind(
+    previous.clientNoticeId,
+    previous.title,
+    previous.content,
+    previous.enabled ? 1 : 0,
+    Math.max(0, Number(previous.deliveredUserCount) || 0),
+    previous.updatedAt || formatNoticeTime(),
+    previous.projectName,
+    previous.id,
+  ).first();
+  return normalizeAdminNoticeRow(row);
+}
+
 // 将管理端公告转换为客户端既有格式并写入 KV。
 export async function writeLatestNotice(env, notice) {
   const payload = {

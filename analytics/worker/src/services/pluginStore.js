@@ -362,6 +362,15 @@ async function resolveGitHubPluginOnce(env, repositoryUrl) {
     throw error;
   }
 
+  // asset.size 缺失时整条完整性校验链（staging/发布后复核）会退化为恒真，
+  // 坏包将以 immutable 语义发布到公网下载地址被客户端永久缓存，与缺少安装包同等对待。
+  const releaseSize = Number(asset.size);
+  if (!Number.isFinite(releaseSize) || releaseSize <= 0) {
+    const error = createPluginError(`最新 Release 安装包缺少有效 size：${expectedAssetName}`, 502);
+    error.releaseNotReady = true;
+    throw error;
+  }
+
   const authorValue = typeof manifest?.author === 'string' ? manifest.author : manifest?.author?.name;
   return {
     id,
@@ -371,7 +380,7 @@ async function resolveGitHubPluginOnce(env, repositoryUrl) {
     author: normalizeText(authorValue, PLUGIN_AUTHOR_MAX_LENGTH),
     repository: repository.repository,
     releaseUrl: normalizeText(asset.browser_download_url, PLUGIN_RELEASE_URL_MAX_LENGTH),
-    releaseSize: Number(asset.size || 0),
+    releaseSize,
     tags: normalizeTagsText(manifest?.tags),
   };
 }
@@ -379,8 +388,9 @@ async function resolveGitHubPluginOnce(env, repositoryUrl) {
 /** 判断 R2 对象是否为完整的目标安装包。 */
 function isCompletePluginPackage(object, expectedSize) {
   if (!object || !(object.size > 0)) return false;
-  // 无期望大小（head 失败等）时无法比对外，仅凭非零体积放行（调用侧还有发布后复核）
-  if (!expectedSize) return true;
+  // 期望大小缺失一律判失败：上游（GitHub asset.size）异常时宁可重新拉取，
+  // 也不能把任意非零体积的对象当成完整包发布或复用。
+  if (!expectedSize) return false;
   return object.size === expectedSize;
 }
 

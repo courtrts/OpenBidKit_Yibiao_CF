@@ -206,6 +206,15 @@ function isLicenseBuildCurrent(payload, buildAttestation) {
     && licenseBuild.keyId === currentBuild.keyId;
 }
 
+// 离线授权此前完全跳过构建绑定校验：签发端逐步补充 build 信息后，
+// 携带 buildId 的离线授权同样要求与当前构建匹配（旧的无 buildId 授权保持兼容）
+function isOfflineLicenseBuildCurrent(payload, buildAttestation) {
+  const licenseBuild = normalizeBuildSnapshot(payload?.build);
+  if (!licenseBuild.buildId) return true;
+  const currentBuild = normalizeBuildSnapshot(buildAttestation);
+  return licenseBuild.buildId === currentBuild.buildId;
+}
+
 function createBaseStatus(partial = {}) {
   return {
     status: 'missing',
@@ -351,7 +360,10 @@ function createLicenseService({ app, configStore }) {
 
     const payload = envelope.payload;
     const offlineLicense = isOfflineLicensePayload(payload);
-    const buildChanged = offlineLicense ? false : !isLicenseBuildCurrent(payload, buildAttestation);
+    // 离线授权若签发时带了 buildId，同样要求与当前构建匹配（旧授权无 buildId 保持兼容）
+    const buildChanged = offlineLicense
+      ? !isOfflineLicenseBuildCurrent(payload, buildAttestation)
+      : !isLicenseBuildCurrent(payload, buildAttestation);
     if (payload.clientId !== runtimeContext.clientId || (payload.machineFingerprintHash && payload.machineFingerprintHash !== runtimeContext.machineFingerprintHash)) {
       invalidateLocalLicense(envelope, 'license_machine_mismatch');
       currentStatus = statusFromPayload(payload, 'machine_mismatch', {

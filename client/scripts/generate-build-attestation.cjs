@@ -117,8 +117,11 @@ async function main() {
 
   if (signature) {
     console.log(`[license] signed build attestation ${payload.buildId}`);
+  } else if (process.env.YIBIAO_REQUIRE_SIGNED_ATTESTATION === '1') {
+    // CI/打包模式：密钥注入失效时必须硬失败，防止发布 100% 判 build_signature_invalid 的空签名包
+    throw new Error('YIBIAO_REQUIRE_SIGNED_ATTESTATION=1 但缺少私钥，拒绝写出未签名的 build attestation');
   } else {
-    console.log('[license] wrote unsigned development build attestation');
+    console.warn('[license] warning: unsigned development build attestation (set YIBIAO_REQUIRE_SIGNED_ATTESTATION=1 to enforce)');
   }
 }
 

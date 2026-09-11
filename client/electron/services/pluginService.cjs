@@ -236,13 +236,15 @@ class PluginService {
     
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      
+      // 跳过升级备份与 staging 中转目录，避免半截目录被当成已安装插件
+      if (entry.name.startsWith('.') || entry.name.includes('.update-backup-')) continue;
+
       const pluginId = entry.name;
       const pluginDir = path.join(pluginsDir, pluginId);
       const manifest = this.readManifest(pluginDir);
-      
+
       if (!manifest) continue;
-      
+
       const state = this.pluginStates[pluginId] || {};
       
       installed.push({
@@ -440,28 +442,44 @@ class PluginService {
       // 下载插件
       console.log('[plugin-service] 下载插件:', pluginInfo.releaseUrl);
       const zipPath = await this.downloadPlugin(pluginInfo.releaseUrl);
-      
-      // 解压到插件目录
-      const pluginDir = path.join(this.getPluginsDir(), pluginId);
-      if (fs.existsSync(pluginDir)) {
-        fs.rmSync(pluginDir, { recursive: true, force: true });
-      }
-      
-      fs.mkdirSync(pluginDir, { recursive: true });
-      await this.extractPlugin(zipPath, pluginDir);
-      
-      // 清理临时文件
-      fs.unlinkSync(zipPath);
-      
-      // 读取 manifest
-      const manifest = this.readManifest(pluginDir);
-      if (!manifest) {
-        throw new Error('插件 manifest.json 不存在或格式错误');
+
+      // 解压到 plugins 目录内的 staging 中转目录（同卷 rename 原子生效），
+      // manifest 校验通过后再替换旧目录——损坏包不再造成旧版已删、新目录半截
+      const pluginsDir = this.getPluginsDir();
+      const stagingDir = fs.mkdtempSync(path.join(pluginsDir, '.staging-market-'));
+      try {
+        await this.extractPlugin(zipPath, stagingDir);
+
+        // 读取 manifest
+        const stagedManifest = this.readManifest(stagingDir);
+        if (!stagedManifest) {
+          throw new Error('插件 manifest.json 不存在或格式错误');
+        }
+        if (stagedManifest.id !== pluginId) {
+          throw new Error(`插件 manifest.id 与市场 ID 不一致：应为 ${pluginId}`);
+        }
+
+        // 校验通过才替换旧目录
+        const pluginDir = path.join(pluginsDir, pluginId);
+        if (this.plugins.has(pluginId)) {
+          await this.disablePlugin(pluginId);
+        }
+        this.clearPluginModuleCache(pluginDir);
+        if (fs.existsSync(pluginDir)) {
+          fs.rmSync(pluginDir, { recursive: true, force: true });
+        }
+        fs.renameSync(stagingDir, pluginDir);
+      } finally {
+        // 失败路径清理半截 staging，成功路径 staging 已被 rename 走（不存在则忽略）
+        fs.rmSync(stagingDir, { recursive: true, force: true });
+        // 清理临时文件
+        fs.unlinkSync(zipPath);
       }
 
-      if (manifest.id !== pluginId) {
-        fs.rmSync(pluginDir, { recursive: true, force: true });
-        throw new Error(`插件 manifest.id 与市场 ID 不一致：应为 ${pluginId}`);
+      // 读取 manifest
+      const manifest = this.readManifest(path.join(pluginsDir, pluginId));
+      if (!manifest) {
+        throw new Error('插件 manifest.json 不存在或格式错误');
       }
       
       // 保存状态
@@ -495,7 +513,8 @@ class PluginService {
       throw new Error('请选择 ZIP 格式的插件安装包');
     }
 
-    const tempRoot = path.join(this.app.getPath('temp'), 'yibiao-plugins');
+    // staging 建在 plugins 目录内（同卷）：os.temp 与 userData 跨盘时 renameSync 会 EXDEV 失败
+    const tempRoot = path.join(this.getPluginsDir(), '.staging-offline');
     fs.mkdirSync(tempRoot, { recursive: true });
     let stagingDir = fs.mkdtempSync(path.join(tempRoot, 'offline-'));
 

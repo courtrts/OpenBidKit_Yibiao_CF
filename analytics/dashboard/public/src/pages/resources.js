@@ -1,5 +1,5 @@
 import { assertAdminToken, getEncodedProjectAndDays, requestFormData, requestJson, saveSettings } from '../api.js';
-import { escapeHtml, formatNumber } from '../render.js';
+import { escapeHtml, formatNumber, safeHttpUrl } from '../render.js';
 import { appState, state } from '../state.js';
 
 function setResourcesStatus(message, type = '') {
@@ -13,8 +13,9 @@ function truncate(value, maxLength = 80) {
 }
 
 function renderResourceImage(resource) {
-  if (resource.imageUrl) {
-    return `<img class="resource-thumb" src="${escapeHtml(resource.imageUrl)}" alt="" />`;
+  // 图片 URL 仅放行 http(s)，防 javascript: 等 scheme 注入
+  if (safeHttpUrl(resource.imageUrl)) {
+    return `<img class="resource-thumb" src="${escapeHtml(safeHttpUrl(resource.imageUrl))}" alt="" />`;
   }
 
   return '<span class="resource-thumb-placeholder">无图片</span>';
@@ -89,8 +90,8 @@ function renderResourcesTable() {
 }
 
 function updateImagePreview(resource) {
-  if (resource?.imageUrl) {
-    state.resourceImagePreview.innerHTML = `<img src="${escapeHtml(resource.imageUrl)}" alt="" />`;
+  if (safeHttpUrl(resource?.imageUrl)) {
+    state.resourceImagePreview.innerHTML = `<img src="${escapeHtml(safeHttpUrl(resource.imageUrl))}" alt="" />`;
     return;
   }
 

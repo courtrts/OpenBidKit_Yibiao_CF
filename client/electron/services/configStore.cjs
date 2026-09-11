@@ -869,4 +869,5 @@ function createConfigStore(app) {
 
 module.exports = {
   createConfigStore,
+  normalizeExportFormat,
 };

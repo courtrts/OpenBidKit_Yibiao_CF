@@ -19,6 +19,7 @@ import type { SectionId } from '../../../shared/types/navigation';
 import { onAppShortcut } from '../../../shared/shortcuts/appShortcuts';
 import { buildExportFormatCssVars } from '../../../shared/utils/exportFormatCss';
 import { countReadableWords } from '../../../shared/utils/wordCount';
+import { withExportFormatDefaults } from '../../export-format/exportFormatNormalize';
 
 interface TechnicalPlanHomeProps {
   workflowKind: TechnicalPlanWorkflowKind;
@@ -386,7 +387,12 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
     return exportTemplates.filter((template) => template.template_name.toLowerCase().includes(keyword));
   }, [exportTemplateSearch, exportTemplates]);
   const selectedExportTemplate = filteredExportTemplates.find((template) => template.template_id === selectedExportTemplateId) || filteredExportTemplates[0] || null;
-  const exportTemplatePreviewStyle = useMemo(() => buildExportFormatCssVars(selectedExportTemplate?.config || exportFormat), [exportFormat, selectedExportTemplate]);
+  // 模板 config 进入预览/导出前统一归一化：缺块的历史模板不再导致弹窗白屏或导出版式错误
+  const selectedExportTemplateConfig = useMemo(
+    () => withExportFormatDefaults(selectedExportTemplate?.config ?? undefined),
+    [selectedExportTemplate],
+  );
+  const exportTemplatePreviewStyle = useMemo(() => buildExportFormatCssVars(selectedExportTemplateConfig), [selectedExportTemplateConfig]);
   const requiresOriginalPlan = workflowKind === 'existing-plan-expansion';
   const isNextDisabled = activeIndex >= steps.length - 1
     || (state.step === 'document-analysis' && (!state.tenderFile || (requiresOriginalPlan && !state.originalPlanFile)))
@@ -1073,7 +1079,7 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
     }
 
     setExportTemplateDialogOpen(false);
-    await runExportWord(selectedExportTemplate.config);
+    await runExportWord(selectedExportTemplateConfig);
   };
 
   const createExportTemplate = () => {
@@ -1466,6 +1472,7 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
           workflowKind={workflowKind}
           outlineWordControlSnapshot={state.outlineWordControlSnapshot}
           outlineData={state.outlineData}
+          outlineLoading={!hydrated}
           task={state.contentGenerationTask}
           contentGenerationOptions={state.contentGenerationOptions}
           contentIllustrationPlan={state.contentIllustrationPlan}
@@ -1678,7 +1685,7 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
                       <span className="section-kicker">预览</span>
                       <strong>{selectedExportTemplate.template_name}</strong>
                     </div>
-                    <TemplatePreview config={selectedExportTemplate.config} previewStyle={exportTemplatePreviewStyle} />
+                    <TemplatePreview config={selectedExportTemplateConfig} previewStyle={exportTemplatePreviewStyle} />
                   </>
                 ) : (
                   <div className="export-template-select-preview-empty">

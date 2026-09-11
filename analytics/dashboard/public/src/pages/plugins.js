@@ -1,6 +1,5 @@
 import { assertAdminToken, getEncodedProjectAndDays, requestJson, saveSettings } from '../api.js';
-import { escapeHtml, formatNumber, safeHttpUrl } from '../render.js';
-import { appState, state } from '../state.js';
+import { escapeHtml, formatNumber, safeHttpUrl } from '../render.js';import { appState, state } from '../state.js';
 
 function setPluginsStatus(message, type = '') {
   state.pluginsStatus.className = type ? `notice-status ${type}` : 'notice-status';
@@ -13,8 +12,9 @@ function truncate(value, maxLength = 80) {
 }
 
 function renderPluginIcon(plugin) {
-  if (plugin.iconUrl) {
-    return `<img class="plugin-icon" src="${escapeHtml(plugin.iconUrl)}" alt="" />`;
+  // 图标 URL 与仓库链接同口径：仅放行 http(s)，防 javascript: 等 scheme 注入
+  if (safeHttpUrl(plugin.iconUrl)) {
+    return `<img class="plugin-icon" src="${escapeHtml(safeHttpUrl(plugin.iconUrl))}" alt="" />`;
   }
 
   return '<span class="plugin-icon-placeholder">📦</span>';

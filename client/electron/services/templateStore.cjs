@@ -1,4 +1,5 @@
 const crypto = require('node:crypto');
+const { normalizeExportFormat } = require('./configStore.cjs');
 
 function now() {
   return new Date().toISOString();
@@ -17,9 +18,11 @@ function templateFromRow(row) {
   return {
     template_id: row.template_id,
     template_name: row.template_name,
+    // 读取层统一归一化：历史/手改库模板缺 page/headings 等块时在此补全，
+    // renderer 各消费点（导出、预览）不再依赖各自记得做 withExportFormatDefaults
     config: (() => {
-    try { return JSON.parse(row.config_json); } catch { return null; }
-  })(),
+      try { return normalizeExportFormat(JSON.parse(row.config_json)); } catch { return null; }
+    })(),
     created_at: row.created_at,
     updated_at: row.updated_at,
   };

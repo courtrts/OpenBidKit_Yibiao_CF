@@ -10,6 +10,8 @@ const { splitUserTextByContextLimit } = require('../utils/userTextSplitter.cjs')
 const { parseDocumentWithConfig } = require('./fileService.cjs');
 
 const supportedExtensions = new Set(['.doc', '.docx', '.wps', '.pdf', '.md', '.markdown', '.xls', '.xlsx']);
+// 单个导入文件大小上限：超大文件会长时间阻塞主进程解析，明确拒绝而不是拖死 UI
+const KNOWLEDGE_IMPORT_MAX_FILE_BYTES = 200 * 1024 * 1024;
 const oversizedBlockChars = 8000;
 const semanticMergeTargetChars = 500;
 const recoveryMaxAttempts = 2;
@@ -2105,14 +2107,28 @@ function createKnowledgeBaseService({ app, aiService, configStore, knowledgeBase
         throw new Error(`文档“${runningDocument.file_name}”正在处理中，请完成后再删除文件夹`);
       }
 
-      for (const document of documentsToDelete) {
-        deleteImportedImageBatches(app, `knowledge-${document.id}`);
-        fs.rmSync(fromRelative(baseDir, document.document_dir), { recursive: true, force: true });
-        enqueueLogRemoval(getDebugLogPath(app, document.id));
-      }
-      fs.rmSync(fromRelative(baseDir, path.join('folders', folderId)), { recursive: true, force: true });
+      // 先删 DB（级联清分块），再 best-effort 清磁盘：Windows 下文件被占用时
+      // rmSync 抛错不应让 DB 记录留在检索结果里指向已消失的内容；
+      // 残留目录由孤儿清理/后续重试兜底。
       knowledgeBaseStore.deleteFolder(folderId);
-      return { success: true, message: `已删除文件夹“${folder.name}”及 ${documentsToDelete.length} 个文档` };
+      let cleanupFailures = 0;
+      for (const document of documentsToDelete) {
+        try {
+          deleteImportedImageBatches(app, `knowledge-${document.id}`);
+          fs.rmSync(fromRelative(baseDir, document.document_dir), { recursive: true, force: true });
+          enqueueLogRemoval(getDebugLogPath(app, document.id));
+        } catch (error) {
+          cleanupFailures += 1;
+          console.error('[knowledge-base] 文件夹删除的磁盘清理失败（已忽略）:', document.id, error?.message || error);
+        }
+      }
+      try {
+        fs.rmSync(fromRelative(baseDir, path.join('folders', folderId)), { recursive: true, force: true });
+      } catch (error) {
+        console.error('[knowledge-base] 文件夹目录磁盘清理失败（已忽略）:', folderId, error?.message || error);
+      }
+      const cleanupNote = cleanupFailures ? `（${cleanupFailures} 个文档的磁盘文件被占用，未能立即清理）` : '';
+      return { success: true, message: `已删除文件夹“${folder.name}”及 ${documentsToDelete.length} 个文档${cleanupNote}` };
     },
 
     deleteDocument(documentId) {
@@ -2121,10 +2137,16 @@ function createKnowledgeBaseService({ app, aiService, configStore, knowledgeBase
         throw new Error('该文档正在处理中，请完成后再删除');
       }
 
-      deleteImportedImageBatches(app, `knowledge-${documentId}`);
-      fs.rmSync(fromRelative(baseDir, document.document_dir), { recursive: true, force: true });
-      enqueueLogRemoval(getDebugLogPath(app, documentId));
+      // 与 deleteFolder 同理：DB 先删，磁盘清理失败不再阻塞删除语义
       knowledgeBaseStore.deleteDocument(documentId);
+      try {
+        deleteImportedImageBatches(app, `knowledge-${documentId}`);
+        fs.rmSync(fromRelative(baseDir, document.document_dir), { recursive: true, force: true });
+        enqueueLogRemoval(getDebugLogPath(app, documentId));
+      } catch (error) {
+        console.error('[knowledge-base] 文档删除的磁盘清理失败（已忽略）:', documentId, error?.message || error);
+        return { success: true, message: `已删除文档“${document.file_name}”（其磁盘文件正被占用，未能立即清理）` };
+      }
       return { success: true, message: `已删除文档“${document.file_name}”` };
     },
 
@@ -2198,9 +2220,30 @@ function createKnowledgeBaseService({ app, aiService, configStore, knowledgeBase
       }
 
       const created = [];
+      const skipped = [];
       for (const filePath of result.filePaths) {
         const ext = path.extname(filePath).toLowerCase();
-        if (!supportedExtensions.has(ext)) continue;
+        if (!supportedExtensions.has(ext)) {
+          skipped.push(`${path.basename(filePath)}（不支持的类型）`);
+          continue;
+        }
+        // 存在性与大小校验：0 字节/不可读文件会在后续 copy/convert 步抛原始系统错误，
+        // 超大文件会长时间阻塞主进程解析，在这里直接跳过并明确告知。
+        let sourceStat = null;
+        try {
+          sourceStat = fs.statSync(filePath);
+        } catch {
+          skipped.push(`${path.basename(filePath)}（文件不可读取）`);
+          continue;
+        }
+        if (!sourceStat.isFile() || sourceStat.size <= 0) {
+          skipped.push(`${path.basename(filePath)}（空文件）`);
+          continue;
+        }
+        if (sourceStat.size > KNOWLEDGE_IMPORT_MAX_FILE_BYTES) {
+          skipped.push(`${path.basename(filePath)}（超过 200MB 上限）`);
+          continue;
+        }
         const documentId = createId('doc');
         const documentDir = path.join('folders', folderId, 'documents', documentId).replace(/\\/g, '/');
         const sourceName = `source${ext}`;
@@ -2229,7 +2272,8 @@ function createKnowledgeBaseService({ app, aiService, configStore, knowledgeBase
         prepareDocument(documentId, filePath, webContents);
       }
 
-      return { success: Boolean(created.length), message: created.length ? `已加入 ${created.length} 个文档处理任务` : '未选择支持的文档类型', documents: created };
+      const skippedNote = skipped.length ? `；已跳过：${skipped.join('、')}` : '';
+      return { success: Boolean(created.length), message: created.length ? `已加入 ${created.length} 个文档处理任务${skippedNote}` : `未选择支持的文档类型${skippedNote}`, documents: created };
     },
 
     retryDocument(documentId, webContents) {

@@ -822,7 +822,7 @@ async function collectJsonResponseWithConfig(app, config, request) {
   let lastError = null;
 
   for (let attempt = 0; attempt < totalAttempts; attempt += 1) {
-    const content = await chatWithConfig(app, config, {
+    const { content, truncated } = await chatWithMeta(app, config, {
       messages: preparedMessages,
       response_format: responseFormat,
       timeout_ms: request.timeout_ms,
@@ -830,6 +830,12 @@ async function collectJsonResponseWithConfig(app, config, request) {
       logTitle,
       signal: request.signal,
     });
+
+    // 截断（finish_reason=length）的输出不可能靠修复救回，直接终局报错，
+    // 不再空跑「解析→修复→整体重发」的最多 3 轮循环
+    if (truncated) {
+      throw new Error(`${failureMessage}：模型输出被 max_tokens 截断（finish_reason=length），请减小输入规模或提高模型输出上限后重试`);
+    }
 
     try {
       const parsed = parseJsonContent(content);
@@ -1352,6 +1358,11 @@ function getGoogleText(responseData) {
 }
 
 async function chatWithConfig(app, config, request) {
+  return (await chatWithMeta(app, config, request)).content;
+}
+
+// 与 chatWithConfig 同源，但额外返回截断信息（finish_reason）供 JSON 收集链路判断
+async function chatWithMeta(app, config, request) {
   if (!config.api_key) {
     throw new Error('请先在设置中配置文本模型 API Key');
   }
@@ -1416,7 +1427,8 @@ async function chatWithConfig(app, config, request) {
       content,
       created_at: new Date().toISOString(),
     });
-    return content;
+    const finishReason = String(responseData?.choices?.[0]?.finish_reason || '');
+    return { content, finishReason, truncated: finishReason === 'length' };
   } catch (error) {
     errorMessage = error.name === 'AbortError'
       ? request.timeout_message || `AI 请求超时（${timeoutMs / 1000} 秒）`

@@ -2487,6 +2487,11 @@ function createExportService({ configStore } = {}) {
           fs.renameSync(tempFilePath, result.filePath);
         } catch (writeError) {
           try { fs.unlinkSync(tempFilePath); } catch { /* 已不存在则忽略 */ }
+          if (writeError && (writeError.code === 'EPERM' || writeError.code === 'EBUSY')) {
+            // Windows 下目标 docx 正被 Word/WPS 打开时 rename 必然失败，
+            // 原始系统错误用户读不懂，转译为可行动的提示。
+            throw new Error('导出失败：目标文件可能正在被打开，请关闭 Word/WPS 后重试，或另存为其他文件名');
+          }
           throw writeError;
         }
         const message = buildResult.warnings.length

@@ -74,6 +74,7 @@ function FeasibilityReportHome({ registerLeaveGuard, onSectionChange }: Feasibil
   const [parametersDraft, setParametersDraft] = useState('');
   const [busyImport, setBusyImport] = useState(false);
   const [pendingRemoveSource, setPendingRemoveSource] = useState<{ id: string; name: string } | null>(null);
+  const [contentDraftDirty, setContentDraftDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
   const [exportOptions, setExportOptions] = useState<FeasibilityExportOptions>(DEFAULT_FEASIBILITY_EXPORT_OPTIONS);
@@ -347,6 +348,12 @@ function FeasibilityReportHome({ registerLeaveGuard, onSectionChange }: Feasibil
   const openExportTemplateDialog = async () => {
     if (!state.outlineData?.outline?.length) {
       showToast('请先生成目录', 'info');
+      return;
+    }
+    // 导出组装用的是 store 里已保存的内容：带着未保存的章节草稿导出，
+    // 用户会误以为改动已包含在文档里，必须先保存。
+    if (contentDraftDirty) {
+      showToast('有章节修改尚未保存，请先在正文中点击“保存”后再导出', 'error');
       return;
     }
     setExportTemplateDialogOpen(true);
@@ -677,6 +684,7 @@ function FeasibilityReportHome({ registerLeaveGuard, onSectionChange }: Feasibil
           reviewing={reviewRunning}
           locked={contentRunning || contentPaused || reviewRunning}
           hasKeyParameters={Boolean(state.keyParametersMarkdown.trim())}
+          onDraftDirtyChange={setContentDraftDirty}
           onSave={async (item: OutlineItem, content: string) => {
             try {
               const patch = await window.yibiao!.feasibilityReport.saveChapterContent({ nodeId: item.id, content });
@@ -754,7 +762,7 @@ function FeasibilityReportHome({ registerLeaveGuard, onSectionChange }: Feasibil
               <div>
                 <span className="section-kicker">Word 导出</span>
                 <Dialog.Title>选择导出模板</Dialog.Title>
-                <Dialog.Description>选择一个已保存模板后继续导出。可研封面、编制说明和基本情况附表在下方单独确认；无财务测算时只会生成项目基本情况表。</Dialog.Description>
+                <Dialog.Description>选择一个已保存模板后继续导出。可研封面、编制说明和基本情况附表在下方单独确认；注意：关键参数仅用于生成正文，不会作为附表单独导出。</Dialog.Description>
               </div>
               <Dialog.Close className="detail-help-close" type="button" aria-label="关闭模板选择" disabled={isExporting}>×</Dialog.Close>
             </div>

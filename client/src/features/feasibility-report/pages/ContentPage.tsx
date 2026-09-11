@@ -17,6 +17,7 @@ interface ContentPageProps {
   locked: boolean;
   hasKeyParameters: boolean;
   onSave: (item: OutlineItem, content: string) => Promise<void>;
+  onDraftDirtyChange?: (dirty: boolean) => void;
 }
 
 type TreeStatus = 'idle' | 'running' | 'success' | 'error' | 'partial';
@@ -97,6 +98,7 @@ function ContentPage({
   locked,
   hasKeyParameters,
   onSave,
+  onDraftDirtyChange,
 }: ContentPageProps) {
   const { showToast } = useToast();
   const [selectedItemId, setSelectedItemId] = useState('');
@@ -277,6 +279,12 @@ function ContentPage({
     ? (outlineMeta.get(selectedItem.id)?.status || 'idle')
     : 'idle';
   const selectedContent = (editing ? draft : selectedItem?.content) || '';
+  // 编辑中的草稿与已保存内容不一致时向 Home 报告：导出走的是已保存内容，
+  // 直接导出会让用户以为改动已包含在文档里。
+  const draftDirty = editing && draft !== (selectedItem?.content || '');
+  useEffect(() => {
+    onDraftDirtyChange?.(draftDirty);
+  }, [draftDirty, onDraftDirtyChange]);
   const selectedStatusText = selectedStatus === 'running'
     ? (inReviewPhase ? '审校中' : '生成中')
     : statusLabels[selectedStatus];

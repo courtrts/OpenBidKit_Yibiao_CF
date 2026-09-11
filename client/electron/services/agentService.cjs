@@ -22,6 +22,8 @@ const {
 
 const PI_RUNTIME_ID = 'pi';
 const PI_RUNTIME_NAME = 'Pi Agent';
+// 监控事件单次合并的 delta 上限（字符）：防异常大块撑爆 IPC payload 与监控窗口渲染
+const MAX_PENDING_DELTA_CHARS = 20000;
 
 function nowIso() {
   return new Date().toISOString();
@@ -232,7 +234,9 @@ function createAgentService({ app, configStore, aiService, licenseService, autoC
       const previous = pendingAssistantDeltas.get(key);
       pendingAssistantDeltas.set(key, {
         ...event,
-        delta: `${previous?.delta || ''}${event.delta || ''}`,
+        // 50ms 防抖窗口内合并 delta；异常大块（如整段回放）按上限裁剪保留尾部，
+        // 防止单个 IPC 事件把监控窗口的渲染与序列化撑爆
+        delta: `${previous?.delta || ''}${event.delta || ''}`.slice(-MAX_PENDING_DELTA_CHARS),
       });
       scheduleMonitorFlush();
       return;

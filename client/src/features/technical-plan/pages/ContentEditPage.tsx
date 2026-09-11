@@ -20,6 +20,8 @@ interface ContentEditPageProps {
   workflowKind: TechnicalPlanWorkflowKind;
   outlineWordControlSnapshot?: OutlineWordControlOptions;
   outlineData: OutlineData | null;
+  /** 工作流状态尚未水合时为 true：区分「正在读取」与「确实没有目录」。 */
+  outlineLoading?: boolean;
   task?: BackgroundTaskState;
   contentGenerationOptions?: ContentGenerationOptions;
   contentIllustrationPlan?: ContentIllustrationPlanState;
@@ -321,6 +323,7 @@ function ContentEditPage({
   workflowKind,
   outlineWordControlSnapshot,
   outlineData,
+  outlineLoading = false,
   task,
   contentGenerationOptions,
   contentIllustrationPlan,
@@ -1171,6 +1174,17 @@ function ContentEditPage({
       </div>
     );
   });
+
+  if (outlineLoading && !outlineData?.outline?.length) {
+    return (
+      <div className="plan-step-body content-generation-page">
+        <section className="markdown-empty-state content-generation-empty">
+          <strong>正在读取目录...</strong>
+          <p>正在加载技术方案目录与已生成正文，请稍候。</p>
+        </section>
+      </div>
+    );
+  }
 
   if (!outlineData?.outline?.length) {
     return (

@@ -122,7 +122,12 @@ function getAnalyticsIdentity() {
         clientId: config?.analytics_client_id || '',
         clientCreatedAt: config?.analytics_created_at || '',
       }))
-      .catch(() => ({ clientId: '', clientCreatedAt: '' })) || Promise.resolve({ clientId: '', clientCreatedAt: '' });
+      .catch(() => {
+        // 负结果不缓存：服务端对空 client_id 直接 400，若把失败结果缓存住，
+        // 一次 config.load 抖动会导致整个会话的事件全部丢失
+        identityPromise = null;
+        return { clientId: '', clientCreatedAt: '' };
+      }) || Promise.resolve({ clientId: '', clientCreatedAt: '' });
   }
 
   return identityPromise;
@@ -134,7 +139,11 @@ function getPlatform() {
 
 function getVersion() {
   if (!versionPromise) {
-    versionPromise = window.yibiao?.getVersion?.().catch(() => '') || Promise.resolve('');
+    versionPromise = window.yibiao?.getVersion?.().catch(() => {
+      // 负结果不缓存，允许下次事件触发时重取（空 version 会被服务端静默丢弃）
+      versionPromise = null;
+      return '';
+    }) || Promise.resolve('');
   }
 
   return versionPromise;
@@ -206,6 +215,8 @@ function sendAnalytics(event: AnalyticsEvent, page = '', payload: Record<string,
       headers: {
         'Content-Type': 'application/json',
       },
+      // keepalive：应用关闭时在途的启动画像事件不再被浏览器直接取消
+      keepalive: true,
       body: JSON.stringify({
         projectName: PROJECT_NAME,
         event,

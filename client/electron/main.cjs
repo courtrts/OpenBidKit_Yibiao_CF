@@ -62,10 +62,25 @@ process.on('unhandledRejection', (reason) => {
   appendCrashLog('unhandledRejection', reason);
 });
 
+// 异常风暴防抖：首次弹模态框提醒用户，之后仅落盘；1 分钟内超过 10 次视为
+// 带病运行不可恢复，走优雅退出，避免连环模态框反复阻塞事件循环
+let uncaughtExceptionDialogShown = false;
+const uncaughtExceptionTimestamps = [];
 process.on('uncaughtException', (error) => {
   console.error('[electron] 未捕获的异常', error);
   appendCrashLog('uncaughtException', error);
-  if (app.isReady()) {
+  const nowMs = Date.now();
+  while (uncaughtExceptionTimestamps.length && nowMs - uncaughtExceptionTimestamps[0] > 60000) {
+    uncaughtExceptionTimestamps.shift();
+  }
+  uncaughtExceptionTimestamps.push(nowMs);
+  if (uncaughtExceptionTimestamps.length >= 10) {
+    console.error('[electron] 60 秒内未捕获异常超过 10 次，执行优雅退出');
+    app.quit();
+    return;
+  }
+  if (app.isReady() && !uncaughtExceptionDialogShown) {
+    uncaughtExceptionDialogShown = true;
     dialog.showErrorBox('易标投标工具箱遇到意外错误', '程序遇到了未捕获的异常，部分功能可能不可用。建议先保存工作，然后重启程序。详情已记录到崩溃日志。');
   }
 });
@@ -591,25 +606,35 @@ app.whenReady().then(() => {
   registerAssetProtocol();
   const mainWindow = createMainWindow();
   scheduleGpuStartupProbeClear(mainWindow);
-  services = registerIpcHandlers({
-    app,
-    mainWindow,
-    // 动态访问器：donation/数据库状态等推送按需解析当前存活主窗口，
-    // macOS 关窗重开后不再指向已销毁的旧窗口。
-    getMainWindow,
-    checkAndDownloadUpdate,
-    triggerUpdateDownload,
-    quitAndInstall,
-    getLatestVersion,
-    getUpdateDownloadUrl,
-    gpuStartupState,
-    gpuTrialArg: GPU_HARDWARE_ACCELERATION_TRIAL_ARG,
-    forceDisableGpuArgs: FORCE_DISABLE_GPU_ARGS,
-    openDeveloperTokenStatsWindow,
-    closeDeveloperTokenStatsWindow,
-    openDeveloperAgentMonitorWindow,
-    closeDeveloperAgentMonitorWindow,
-  });
+  try {
+    services = registerIpcHandlers({
+      app,
+      mainWindow,
+      // 动态访问器：donation/数据库状态等推送按需解析当前存活主窗口，
+      // macOS 关窗重开后不再指向已销毁的旧窗口。
+      getMainWindow,
+      checkAndDownloadUpdate,
+      triggerUpdateDownload,
+      quitAndInstall,
+      getLatestVersion,
+      getUpdateDownloadUrl,
+      gpuStartupState,
+      gpuTrialArg: GPU_HARDWARE_ACCELERATION_TRIAL_ARG,
+      forceDisableGpuArgs: FORCE_DISABLE_GPU_ARGS,
+      openDeveloperTokenStatsWindow,
+      closeDeveloperTokenStatsWindow,
+      openDeveloperAgentMonitorWindow,
+      closeDeveloperAgentMonitorWindow,
+    });
+  } catch (error) {
+    // 数据库迁移/服务初始化失败时窗口已显示但全部 IPC 无 handler，形成"假正常"界面；
+    // 必须显式告知用户并退出，而不是静默吞进 unhandledRejection
+    console.error('[electron] 服务初始化失败', error);
+    appendCrashLog('services-init', error);
+    dialog.showErrorBox('易标投标工具箱初始化失败', `核心服务初始化失败，应用无法正常工作，即将退出。\n\n${error?.message || String(error)}`);
+    app.quit();
+    return;
+  }
   setupAutoUpdate({ app, mainWindow, getMainWindow });
   void checkBlockedIpAfterStartup();
 
@@ -619,6 +644,11 @@ app.whenReady().then(() => {
       createMainWindow();
     }
   });
+}).catch((error) => {
+  console.error('[electron] 启动流程失败', error);
+  appendCrashLog('app-when-ready', error);
+  dialog.showErrorBox('易标投标工具箱启动失败', `启动流程发生错误，即将退出。\n\n${error?.message || String(error)}`);
+  app.quit();
 });
 
 app.on('child-process-gone', (_event, details) => {

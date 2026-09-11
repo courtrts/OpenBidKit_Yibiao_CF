@@ -78,7 +78,35 @@ function nowIso() {
 
 function isExpired(expiresAt) {
   const date = new Date(expiresAt);
-  return !expiresAt || Number.isNaN(date.getTime()) || date.getTime() <= Date.now();
+  // 时钟水位：见过的最大系统时间（随运行推进并落盘）。系统时钟被回拨时
+  // 以水位为准，防止把已过期授权"复活"；水位缺失（首启）退回系统时间。
+  const referenceMs = clockWatermarkMs > 0 ? clockWatermarkMs : Date.now();
+  return !expiresAt || Number.isNaN(date.getTime()) || date.getTime() <= referenceMs;
+}
+
+let clockWatermarkMs = 0;
+let clockWatermarkFilePath = null;
+let clockWatermarkPersistedAt = 0;
+
+function loadClockWatermark(app) {
+  try {
+    clockWatermarkFilePath = `${getLicenseFilePath(app)}.clock`;
+    const raw = JSON.parse(fs.readFileSync(clockWatermarkFilePath, 'utf-8'));
+    clockWatermarkMs = Math.max(0, Number(raw.watermarkMs) || 0);
+  } catch { /* 首次启动无水位文件，属正常 */ }
+}
+
+function advanceClockWatermark() {
+  const nowMs = Date.now();
+  if (nowMs <= clockWatermarkMs) return;
+  clockWatermarkMs = nowMs;
+  // 至多每 10 分钟落盘一次；回拨超过水位与落盘点之间的部分无法防护，属可接受权衡
+  if (clockWatermarkMs - clockWatermarkPersistedAt >= 10 * 60 * 1000 && clockWatermarkFilePath) {
+    try {
+      fs.writeFileSync(clockWatermarkFilePath, JSON.stringify({ watermarkMs: clockWatermarkMs }), 'utf-8');
+      clockWatermarkPersistedAt = clockWatermarkMs;
+    } catch { /* 落盘失败下次再试 */ }
+  }
 }
 
 function getPublicJwk() {
@@ -296,6 +324,8 @@ function statusFromPayload(payload, status, extra = {}) {
 
 function createLicenseService({ app, configStore }) {
   const licenseFile = getLicenseFilePath(app);
+  loadClockWatermark(app);
+  advanceClockWatermark();
   const debugLicenseDisabled = !app.isPackaged;
   let currentStatus = debugLicenseDisabled ? createDebugDisabledStatus() : createBaseStatus();
 
@@ -573,6 +603,7 @@ function createLicenseService({ app, configStore }) {
       return envelope ? { payload: envelope.payload, signature: envelope.signature } : null;
     },
     getStatus() {
+      advanceClockWatermark();
       return evaluateLocalLicense();
     },
     refresh() {

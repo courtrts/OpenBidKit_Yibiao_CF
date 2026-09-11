@@ -1358,7 +1358,13 @@ function getGoogleText(responseData) {
 }
 
 async function chatWithConfig(app, config, request) {
-  return (await chatWithMeta(app, config, request)).content;
+  const meta = await chatWithMeta(app, config, request);
+  // 正文等长文生成可声明 fail_on_truncation：被 max_tokens 截断的半章
+  // 不能当作成功结果落库（续跑会误判已完成）
+  if (request.fail_on_truncation && meta.truncated) {
+    throw new Error('模型输出被 max_tokens 截断（finish_reason=length），请减小输入规模或提高模型输出上限后重试');
+  }
+  return meta.content;
 }
 
 // 与 chatWithConfig 同源，但额外返回截断信息（finish_reason）供 JSON 收集链路判断

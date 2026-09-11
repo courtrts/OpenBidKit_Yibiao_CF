@@ -2668,7 +2668,9 @@ function createInitialSections(leaves, existingSections) {
   for (const { item } of leaves) {
     const existing = next[item.id];
     const interrupted = existing?.status === 'running';
-    const content = interrupted ? '' : existing?.content || item.content || '';
+    // 被中断的章节保留旧正文、仅置 error：续跑首个 checkpoint 会把 sections 落库，
+    // 若在这里清空，重生成再失败时回退链拿到的就是空串，原先的好版本永久丢失
+    const content = existing?.content || item.content || '';
     const existingStatus = interrupted ? 'error' : existing?.status;
     next[item.id] = {
       id: item.id,
@@ -4269,6 +4271,8 @@ async function runContentGenerationTask({ aiService, agentService, workspaceStor
       } else {
         generatedContent = await aiService.chat({
           messages: contentMessages,
+          // 截断的半章不能落库为 success（续跑会误判已完成）
+          fail_on_truncation: true,
           logTitle: `${needsRestoredOptimization ? '原方案优化扩写' : '正文生成'}-${item.id}-${item.title || '未命名章节'}`,
         });
       }

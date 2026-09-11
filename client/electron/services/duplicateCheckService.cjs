@@ -2823,7 +2823,21 @@ function createDuplicateCheckService({ app, configStore, workspaceStore } = {}) 
         contentAnalysis,
         imageAnalysis,
       };
-      const initialLogs = [force ? '开始重新执行标书查重分析。' : '开始执行标书查重分析。'];
+      // 告知用户本次会重跑哪些阶段：上次未完成/签名已变的阶段都需要重新消耗 AI 配额
+      const staleStageLabels = [
+        ['正文解析', current.metadataAnalysis],
+        ['提纲查重', current.outlineAnalysis],
+        ['正文查重', current.contentAnalysis],
+        ['图片查重', current.imageAnalysis],
+      ]
+        .filter(([, analysis]) => !(analysis?.signature === signature && analysis?.status === 'success'))
+        .map(([label]) => label);
+      const rerunNote = force
+        ? ''
+        : staleStageLabels.length
+          ? `上次未完成的阶段将重新执行：${staleStageLabels.join('、')}。`
+          : '上次结果缺失，将完整执行各阶段。';
+      const initialLogs = [force ? '开始重新执行标书查重分析。' : `开始执行标书查重分析。${rerunNote}`];
       let latestLog = initialLogs[0];
       checkpointTask({ status: 'running', progress: 0, logs: initialLogs }, {
         tenderFile: tenderFiles[0] || null,

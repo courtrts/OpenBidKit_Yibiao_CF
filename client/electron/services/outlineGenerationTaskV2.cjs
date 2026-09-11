@@ -731,6 +731,7 @@ async function runOutlineGenerationTaskV2({ aiService, agentService, ordinaryAge
   let fixedAiLeafCount = 0;
   let allocatedAiLeafCount = null;
   let finalOutline = null;
+  let preReviewOutlineSnapshot = null;
   let actualLeafCount = 0;
   let leafWarning = '';
   let wordAdjustmentAttempts = 0;
@@ -861,6 +862,8 @@ async function runOutlineGenerationTaskV2({ aiService, agentService, ordinaryAge
       scoreDirectoryPlan,
       targetLeafCount,
     });
+    // 快照审核前的 last-good 结果：Agent 修复若反而破坏结构，可回退到这里
+    preReviewOutlineSnapshot = finalOutline;
     publish('子目录生成完成，正在准备最终审核', 88, {
       outline: {
         phase: 'reviewing',
@@ -1013,7 +1016,20 @@ async function runOutlineGenerationTaskV2({ aiService, agentService, ordinaryAge
         const reviewedOutline = readJson(candidate.output_content, OUTLINE_OUTPUT_FILE);
         const normalizedReviewedOutline = buildFinalOutline(reviewedOutline);
         outlineReview = readJson(await meta.readFile(OUTLINE_REVIEW_FILE), OUTLINE_REVIEW_FILE);
-        finalOutline = normalizedReviewedOutline;
+        // 审核修复后的确定性复检：结构问题（孤儿叶子/单子节点）比审核前更多，
+        // 说明修复反而更糟，回退到审核前快照，避免坏目录替换 last-good 入库
+        const countStructureIssues = (outline) => {
+          const structure = buildOutlineReviewContext({ outline, scoreDirectoryPlan, targetLeafCount }).structure;
+          return structure.invalid_leaf_content_modes.length + structure.single_child_nodes.length;
+        };
+        let reviewFallbackNote = '';
+        if (preReviewOutlineSnapshot
+          && countStructureIssues(normalizedReviewedOutline) > countStructureIssues(preReviewOutlineSnapshot)) {
+          finalOutline = preReviewOutlineSnapshot;
+          reviewFallbackNote = '（审核修复后结构复检未通过，已自动回退到审核前版本）';
+        } else {
+          finalOutline = normalizedReviewedOutline;
+        }
         scoreDirectoryPlan = synchronizeScoreDirectoryPlan(scoreDirectoryPlan, finalOutline.outline);
         actualLeafCount = countAiLeaves(finalOutline.outline);
         await meta.writeFiles([
@@ -1027,13 +1043,13 @@ async function runOutlineGenerationTaskV2({ aiService, agentService, ordinaryAge
             leafWarning = `AI 生成小节目标为 ${targetLeafCount}，用户已确认最终保留当前 ${actualLeafCount} 个。`;
           }
         }
-        const reviewMessage = outlineReview.status === 'passed'
+        const reviewMessage = `${outlineReview.status === 'passed'
           ? '目录审核通过'
           : outlineReview.status === 'simple_fix'
             ? '目录审核完成，Agent 已自动微调简单问题'
             : outlineReview.status === 'user_feedback'
               ? '目录审核完成，已按用户反馈修复'
-              : '目录审核完成，用户选择保留当前目录';
+              : '目录审核完成，用户选择保留当前目录'}${reviewFallbackNote}`;
         publish(reviewMessage, 95, {
           outline: {
             phase: 'reviewing',

@@ -269,8 +269,12 @@ export function setupAgentErrorsPage() {
     void loadAgentErrors({ quiet: true }).catch((error) => setAgentErrorStatus(error?.message || String(error), 'error'));
   });
   state.nextAgentErrorPage.addEventListener('click', () => {
+    // 先行 +1 后请求失败时回滚页码，避免「第 N+1 / N 页 + 空表」的错位状态
     appState.agentErrorPage += 1;
-    void loadAgentErrors({ quiet: true }).catch((error) => setAgentErrorStatus(error?.message || String(error), 'error'));
+    void loadAgentErrors({ quiet: true }).catch((error) => {
+      appState.agentErrorPage = Math.max(1, appState.agentErrorPage - 1);
+      setAgentErrorStatus(error?.message || String(error), 'error');
+    });
   });
   state.jumpAgentErrorPage.addEventListener('click', jumpPage);
   state.agentErrorPageInput.addEventListener('keydown', (event) => {

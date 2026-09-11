@@ -148,6 +148,8 @@ function setupVersionBlocksPage() {
   state.addVersionBlockButton.addEventListener('click', async () => {
     const version = state.versionBlockInput.value.trim();
     if (!version) return setVersionBlockStatus('请输入版本号；封禁空版本号请使用下方的复选框。', 'error');
+    // 与封禁 IP/空版本号一致：该操作会删除当天客户端明细，必须先确认
+    if (!window.confirm(`确认封禁版本号「${version}」吗？将删除其当天的客户端明细，且不可恢复。`)) return;
     try {
       await submitVersionBlock(version);
       state.versionBlockInput.value = '';

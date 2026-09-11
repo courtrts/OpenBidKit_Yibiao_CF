@@ -1321,16 +1321,32 @@ async function runRollingRejectionItemCheck(aiService, input, onProgress) {
   let state = createEmptyRollingRejectionState();
   onProgress('正在按上下文长度滚动审阅投标包。');
 
+  // 分段容错：单段失败跳过并继续，已完成段的累积状态保留进入定稿；
+  // 全部分段失败才整体失败（此前任一段失败即丢弃全部已完成段）。
+  const failedSegments = [];
   for (const segment of segments) {
     onProgress(`${segment.documentLabel}：正在滚动审阅投标包第 ${segment.segmentIndex}/${segment.totalSegments} 段。`);
     const stateSummary = createRollingRejectionStateSummary(state);
-    const payload = await runJson(aiService, {
-      messages: buildRollingRejectionSegmentMessages(input, segment, stateSummary),
-      schemaName: 'RollingRejectionCheckPatch',
-      progressLabel: '投标包废标项滚动审阅',
-      failureMessage: '废标项滚动审阅状态格式无效，请重新检查',
-    }, onProgress, '投标包废标项滚动审阅');
+    let payload;
+    try {
+      payload = await runJson(aiService, {
+        messages: buildRollingRejectionSegmentMessages(input, segment, stateSummary),
+        schemaName: 'RollingRejectionCheckPatch',
+        progressLabel: '投标包废标项滚动审阅',
+        failureMessage: '废标项滚动审阅状态格式无效，请重新检查',
+      }, onProgress, '投标包废标项滚动审阅');
+    } catch (error) {
+      failedSegments.push(segment.documentLabel);
+      onProgress(`${segment.documentLabel}：本段审阅失败，已跳过（${error.message || error}）。`);
+      continue;
+    }
     state = applyRollingRejectionPatch(state, normalizeRollingRejectionPatch(payload, input.bidDocuments, segment.documentId));
+  }
+  if (segments.length && failedSegments.length === segments.length) {
+    throw new Error('滚动审阅全部分段均失败，请检查模型服务后重试');
+  }
+  if (failedSegments.length) {
+    onProgress(`有 ${failedSegments.length} 段审阅失败被跳过，定稿结果可能不完整。`);
   }
 
   onProgress('正在基于全投标包状态定稿废标项风险。');
@@ -1341,12 +1357,19 @@ async function runRollingRejectionItemCheck(aiService, input, onProgress) {
   const finalSummary = createFinalRejectionStateSummary(state);
   for (const [batchIndex, batch] of batches.entries()) {
     onProgress(`正在定稿废标项风险第 ${batchIndex + 1}/${batches.length} 批。`);
-    const finalPayload = await runJson(aiService, {
-      messages: buildRejectionFinalBatchMessages(input, batch, finalSummary, batchIndex + 1, batches.length),
-      schemaName: 'RejectionCheckFindings',
-      progressLabel: '投标包废标项检查定稿',
-      failureMessage: '废标项检查结果格式无效，请重新检查',
-    }, onProgress, '投标包废标项检查定稿');
+    let finalPayload;
+    try {
+      finalPayload = await runJson(aiService, {
+        messages: buildRejectionFinalBatchMessages(input, batch, finalSummary, batchIndex + 1, batches.length),
+        schemaName: 'RejectionCheckFindings',
+        progressLabel: '投标包废标项检查定稿',
+        failureMessage: '废标项检查结果格式无效，请重新检查',
+      }, onProgress, '投标包废标项检查定稿');
+    } catch (error) {
+      // 单批失败跳过并保留已完成批次，避免一批失败丢掉全部定稿结果
+      onProgress(`定稿第 ${batchIndex + 1} 批失败，已跳过（${error.message || error}）。`);
+      continue;
+    }
     findings.push(...normalizeRejectionCheckFindings(finalPayload, input.bidDocuments));
   }
   const mergedFindings = dedupeRejectionFindings(findings);
@@ -1371,12 +1394,19 @@ async function runSegmentedTypoCheck(aiService, input, onProgress) {
     const segments = createBidDocumentSegments(document, config, typoSegmentLimitRatio);
     for (const segment of segments) {
       onProgress(`${documentLabel}：正在识别第 ${segment.segmentIndex}/${segment.totalSegments} 段错别字。`);
-      const payload = await runJson(aiService, {
-        messages: buildTypoCheckMessages({ bidDocuments: [createSegmentPromptDocument(document, segment)] }),
-        schemaName: 'TypoCheckFindings',
-        progressLabel: `${documentLabel}错别字检查`,
-        failureMessage: '错别字检查结果格式无效，请重新检查',
-      }, onProgress, `${documentLabel}错别字检查`);
+      let payload;
+      try {
+        payload = await runJson(aiService, {
+          messages: buildTypoCheckMessages({ bidDocuments: [createSegmentPromptDocument(document, segment)] }),
+          schemaName: 'TypoCheckFindings',
+          progressLabel: `${documentLabel}错别字检查`,
+          failureMessage: '错别字检查结果格式无效，请重新检查',
+        }, onProgress, `${documentLabel}错别字检查`);
+      } catch (error) {
+        // 单段失败跳过保留已完成段的发现，全部段失败在后续 mergedFindings 空判断里兜底
+        onProgress(`${documentLabel}：本段错别字识别失败，已跳过（${error.message || error}）。`);
+        continue;
+      }
       findings.push(...normalizeTypoCheckFindings(payload, [document], {
         segmentStartOffset: segment.startOffset,
         segmentEndOffset: segment.endOffset,
@@ -1394,16 +1424,31 @@ async function runRollingLogicCheck(aiService, input, onProgress) {
   let state = createEmptyRollingLogicState();
   onProgress('正在按上下文长度滚动检查投标包逻辑谬误。');
 
+  // 与废标滚动审阅同款分段容错：单段失败跳过，全部分段失败才整体失败
+  const failedSegments = [];
   for (const segment of segments) {
     onProgress(`${segment.documentLabel}：正在滚动检查投标包第 ${segment.segmentIndex}/${segment.totalSegments} 段逻辑。`);
     const stateSummary = createRollingLogicStateSummary(state);
-    const payload = await runJson(aiService, {
-      messages: buildRollingLogicSegmentMessages(input, segment, stateSummary),
-      schemaName: 'RollingLogicCheckPatch',
-      progressLabel: '投标包逻辑滚动检查',
-      failureMessage: '逻辑谬误滚动检查状态格式无效，请重新检查',
-    }, onProgress, '投标包逻辑滚动检查');
+    let payload;
+    try {
+      payload = await runJson(aiService, {
+        messages: buildRollingLogicSegmentMessages(input, segment, stateSummary),
+        schemaName: 'RollingLogicCheckPatch',
+        progressLabel: '投标包逻辑滚动检查',
+        failureMessage: '逻辑谬误滚动检查状态格式无效，请重新检查',
+      }, onProgress, '投标包逻辑滚动检查');
+    } catch (error) {
+      failedSegments.push(segment.documentLabel);
+      onProgress(`${segment.documentLabel}：本段逻辑检查失败，已跳过（${error.message || error}）。`);
+      continue;
+    }
     state = applyRollingLogicPatch(state, normalizeRollingLogicPatch(payload, input.bidDocuments, segment.documentId));
+  }
+  if (segments.length && failedSegments.length === segments.length) {
+    throw new Error('逻辑检查全部分段均失败，请检查模型服务后重试');
+  }
+  if (failedSegments.length) {
+    onProgress(`有 ${failedSegments.length} 段逻辑检查失败被跳过，定稿结果可能不完整。`);
   }
 
   onProgress('正在基于全投标包状态定稿逻辑问题。');
@@ -1414,12 +1459,19 @@ async function runRollingLogicCheck(aiService, input, onProgress) {
   const finalSummary = createFinalLogicStateSummary(state);
   for (const [batchIndex, batch] of batches.entries()) {
     onProgress(`正在定稿逻辑问题第 ${batchIndex + 1}/${batches.length} 批。`);
-    const finalPayload = await runJson(aiService, {
-      messages: buildLogicFinalBatchMessages(input, batch, finalSummary, batchIndex + 1, batches.length),
-      schemaName: 'LogicCheckFindings',
-      progressLabel: '投标包逻辑谬误检查定稿',
-      failureMessage: '逻辑谬误检查结果格式无效，请重新检查',
-    }, onProgress, '投标包逻辑谬误检查定稿');
+    let finalPayload;
+    try {
+      finalPayload = await runJson(aiService, {
+        messages: buildLogicFinalBatchMessages(input, batch, finalSummary, batchIndex + 1, batches.length),
+        schemaName: 'LogicCheckFindings',
+        progressLabel: '投标包逻辑谬误检查定稿',
+        failureMessage: '逻辑谬误检查结果格式无效，请重新检查',
+      }, onProgress, '投标包逻辑谬误检查定稿');
+    } catch (error) {
+      // 单批失败跳过保留已完成批次，避免一批失败丢掉全部定稿结果
+      onProgress(`逻辑定稿第 ${batchIndex + 1} 批失败，已跳过（${error.message || error}）。`);
+      continue;
+    }
     findings.push(...normalizeLogicCheckFindings(finalPayload, input.bidDocuments));
   }
   const mergedFindings = dedupeLogicFindings(findings);

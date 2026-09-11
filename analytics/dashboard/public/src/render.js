@@ -9,6 +9,13 @@ export function escapeHtml(value) {
     .replaceAll("'", '&#039;');
 }
 
+// href/DOM 赋值上下文里 escapeHtml 不拦截 javascript: 等 scheme，
+// 仅放行 http(s) 外链，其余返回空串由调用侧降级为占位文本。
+export function safeHttpUrl(value) {
+  const text = String(value ?? '').trim();
+  return /^https?:\/\//i.test(text) ? text : '';
+}
+
 export function formatNumber(value) {
   return Number(value || 0).toLocaleString('zh-CN');
 }

@@ -1,12 +1,12 @@
 import { assertReady, getEncodedProjectAndDays, loadProjectOptions, requestJson, saveSettings } from '../api.js';
 import { state } from '../state.js';
-import { formatNumber, formatPercent, renderTable } from '../render.js';
+import { formatNumber, formatPercent, renderTable, safeHttpUrl } from '../render.js';
 
 function renderGitHubStats(repo) {
   state.githubStars.textContent = repo ? formatNumber(repo.stars) : '-';
   state.githubForks.textContent = repo ? formatNumber(repo.forks) : '-';
   state.githubOpenIssues.textContent = repo ? formatNumber(repo.openIssues) : '-';
-  state.githubRepoUrl.href = repo?.htmlUrl || 'https://github.com/FB208/OpenBidKit_Yibiao';
+  state.githubRepoUrl.href = safeHttpUrl(repo?.htmlUrl) || 'https://github.com/FB208/OpenBidKit_Yibiao';
 }
 
 export async function loadOverview() {

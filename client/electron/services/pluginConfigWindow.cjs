@@ -82,7 +82,15 @@ function openPluginConfigWindow(app, pluginId, pluginService) {
       },
     });
 
-    win.loadFile(configPath);
+    // existsSync 通过后文件仍可能在加载前被删除/损坏；load 失败若不捕获会成为
+    // unhandledRejection 且用户只看到白屏，这里记录并给出可见的错误页后关窗。
+    win.loadFile(configPath).catch((error) => {
+      console.error('[plugin-config] load failed', error?.message || String(error));
+      win.webContents.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent('<body style="font-family:sans-serif"><h3>插件配置界面加载失败</h3><p>配置文件可能已损坏或被移动，请重新安装该插件。</p></body>')}`).catch(() => undefined);
+      setTimeout(() => {
+        if (!win.isDestroyed()) win.close();
+      }, 3000);
+    });
 
     win.webContents.setWindowOpenHandler(({ url }) => {
       void openPluginExternalUrl(url);

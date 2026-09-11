@@ -1,5 +1,5 @@
 import { assertAdminToken, getEncodedProjectAndDays, requestJson, saveSettings } from '../api.js';
-import { escapeHtml, formatNumber } from '../render.js';
+import { escapeHtml, formatNumber, safeHttpUrl } from '../render.js';
 import { appState, state } from '../state.js';
 
 function setPluginsStatus(message, type = '') {
@@ -68,7 +68,7 @@ function renderPluginsTable() {
       <td>${escapeHtml(plugin.author || '-')}</td>
       <td>${escapeHtml(formatNumber(plugin.downloadCount))}</td>
       <td class="plugin-description-cell">${escapeHtml(truncate(plugin.description, 90) || '-')}</td>
-      <td class="plugin-repository-cell"><a href="${escapeHtml(plugin.repository)}" target="_blank">查看仓库</a></td>
+      <td class="plugin-repository-cell">${safeHttpUrl(plugin.repository) ? `<a href="${escapeHtml(safeHttpUrl(plugin.repository))}" target="_blank" rel="noopener noreferrer">查看仓库</a>` : '-'}</td>
       <td class="plugin-row-actions">
         <button type="button" class="secondary-button" data-plugin-action="edit" data-plugin-id="${escapeHtml(plugin.id)}">编辑</button>
         <button type="button" class="danger-button" data-plugin-action="delete" data-plugin-id="${escapeHtml(plugin.id)}">删除</button>

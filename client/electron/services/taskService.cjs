@@ -866,51 +866,69 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
       return { success: true };
     };
 
-    const previousState = loadWorkspaceState(definition) || {};
-    const initialState = startOptions.skipInitialStateUpdate
-      ? previousState
-      : { ...initialPartial, [taskField]: currentTask };
-    if (!startOptions.skipInitialStateUpdate) {
-      updateWorkspaceStateWithoutReload(definition, initialState);
-    }
-    emit(currentTask, buildSnapshot(definition, initialState, currentTask));
-    if (startOptions.restoreOutlineSelectionWaiter) {
-      taskControl.waitForOutlineSelection();
-    }
-
-    const runnerWorkspaceStore = definition.stateKey === 'technicalPlan'
-      ? technicalPlanStore
-      : definition.stateKey === 'rejectionCheck'
-        ? rejectionCheckStore
-        : definition.stateKey === 'feasibilityReport'
-          ? feasibilityReportStore
-          : duplicateCheckStore;
-    const runnerAiService = aiService?.withQueueScope ? aiService.withQueueScope(queueScopeId, taskControl.signal) : aiService;
-    const agentTaskContextProvider = () => createAgentUserTaskContext(type, definition, payload, currentTask);
-    const runnerAgentService = agentService.bindTaskContext(
-      agentTaskContextProvider,
-      {
-        queueScopeId,
-        signal: taskControl.signal,
-        primary_session: startOptions.primarySession === true,
-      },
-    );
-    const runnerOrdinaryAgentService = agentService.bindTaskContext(
-      agentTaskContextProvider,
-      {
-        queueScopeId,
-        signal: taskControl.signal,
-      },
-    );
-    runner({ aiService: runnerAiService, agentService: runnerAgentService, ordinaryAgentService: runnerOrdinaryAgentService, workspaceStore: runnerWorkspaceStore, knowledgeBaseService, openXmlHelperService, updateTask, checkpointTask, payload, taskControl, previousState }).catch((error) => {
-      // 用户暂停导致 AI 队列作用域拒绝时落 paused 而非 error（与 runner 内部
-      // 显式 catch 同语义，兜底防止 runner 未自行捕获的路径漏到 error 终态）
-      if (error?.code === 'AI_QUEUE_SCOPE_PAUSED') {
-        checkpointTask({ status: 'paused', pause_requested: false, error: '' });
-      } else if (!taskControl.signal.aborted) {
-        checkpointTask({ status: 'error', error: error.message || '任务执行失败' });
+    // 初始化段（磁盘写/emit 订阅者回调都可能抛错）任何一步失败都必须
+    // 走与 runner 兜底相同的清理路径，否则 activeTasks/activeTaskControls
+    // 残留 running 僵尸任务，把整组任务永久锁死。
+    try {
+      const previousState = loadWorkspaceState(definition) || {};
+      const initialState = startOptions.skipInitialStateUpdate
+        ? previousState
+        : { ...initialPartial, [taskField]: currentTask };
+      if (!startOptions.skipInitialStateUpdate) {
+        updateWorkspaceStateWithoutReload(definition, initialState);
       }
-    }).finally(() => {
+      emit(currentTask, buildSnapshot(definition, initialState, currentTask));
+      if (startOptions.restoreOutlineSelectionWaiter) {
+        taskControl.waitForOutlineSelection();
+      }
+
+      const runnerWorkspaceStore = definition.stateKey === 'technicalPlan'
+        ? technicalPlanStore
+        : definition.stateKey === 'rejectionCheck'
+          ? rejectionCheckStore
+          : definition.stateKey === 'feasibilityReport'
+            ? feasibilityReportStore
+            : duplicateCheckStore;
+      const runnerAiService = aiService?.withQueueScope ? aiService.withQueueScope(queueScopeId, taskControl.signal) : aiService;
+      const agentTaskContextProvider = () => createAgentUserTaskContext(type, definition, payload, currentTask);
+      const runnerAgentService = agentService.bindTaskContext(
+        agentTaskContextProvider,
+        {
+          queueScopeId,
+          signal: taskControl.signal,
+          primary_session: startOptions.primarySession === true,
+        },
+      );
+      const runnerOrdinaryAgentService = agentService.bindTaskContext(
+        agentTaskContextProvider,
+        {
+          queueScopeId,
+          signal: taskControl.signal,
+        },
+      );
+      runner({ aiService: runnerAiService, agentService: runnerAgentService, ordinaryAgentService: runnerOrdinaryAgentService, workspaceStore: runnerWorkspaceStore, knowledgeBaseService, openXmlHelperService, updateTask, checkpointTask, payload, taskControl, previousState }).catch((error) => {
+        // 用户暂停导致 AI 队列作用域拒绝时落 paused 而非 error（与 runner 内部
+        // 显式 catch 同语义，兜底防止 runner 未自行捕获的路径漏到 error 终态）
+        if (error?.code === 'AI_QUEUE_SCOPE_PAUSED') {
+          checkpointTask({ status: 'paused', pause_requested: false, error: '' });
+        } else if (!taskControl.signal.aborted) {
+          checkpointTask({ status: 'error', error: error.message || '任务执行失败' });
+        }
+      }).finally(() => {
+        taskControl.dispose();
+        if (aiService?.resumeQueueScope) {
+          aiService.resumeQueueScope(queueScopeId);
+        }
+        activeTasks.delete(type);
+        activeTaskControls.delete(type);
+        resolveSettled();
+      });
+    } catch (error) {
+      if (!taskControl.signal.aborted) {
+        try {
+          checkpointTask({ status: 'error', error: error.message || '任务启动失败' });
+        } catch {}
+      }
       taskControl.dispose();
       if (aiService?.resumeQueueScope) {
         aiService.resumeQueueScope(queueScopeId);
@@ -918,7 +936,7 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
       activeTasks.delete(type);
       activeTaskControls.delete(type);
       resolveSettled();
-    });
+    }
 
     return currentTask;
   }

@@ -94,7 +94,17 @@ function jumpClientsPage() {
   void refreshActiveTab({ forceRefresh: true });
 }
 
-async function refreshActiveTab(options = {}) {
+// 串行化刷新队列：并发 loader 的慢响应会覆盖新筛选/新项目的数据（竞态），
+// 排队后总是最新参数最后落表，代价是连续切换时多渲染一次。
+let refreshChain = Promise.resolve();
+
+function refreshActiveTab(options = {}) {
+  const pending = refreshChain.then(() => runRefreshActiveTab(options));
+  refreshChain = pending.then(() => undefined, () => undefined);
+  return pending;
+}
+
+async function runRefreshActiveTab(options = {}) {
   setError('');
   const activeTab = appState.activeTab;
   if (!options.forceRefresh && isTabCacheFresh(activeTab)) {
@@ -200,7 +210,12 @@ function bindEvents() {
 
   state.apiBase.addEventListener('change', saveSettingsAndClearCache);
   state.adminToken.addEventListener('change', saveSettingsAndClearCache);
-  state.projectName.addEventListener('change', saveSettingsAndClearCache);
+  state.projectName.addEventListener('change', () => {
+    saveSettingsAndClearCache();
+    // 切换项目后旧项目的表格必须立刻让位：公告删除/IP 封禁等操作都取当前
+    // 选中的项目名，滞留旧列表会诱导「看着 A 项目列表删 B 项目」的误操作。
+    void refreshActiveTab({ resetClientsPage: true, resetLatestPage: true, resetIpPage: true, resetAgentErrorPage: true, forceRefresh: true });
+  });
   state.ipDate.addEventListener('change', () => refreshActiveTab({ resetIpPage: true, forceRefresh: true }));
   state.allIpDatesButton.addEventListener('click', () => {
     state.ipDate.value = '';

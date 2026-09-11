@@ -2,7 +2,11 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { generateHtmlIllustration } = require('./contentIllustrationGeneration.cjs');
 
-const png = Buffer.from('89504e470d0a1a0a', 'hex');
+// 完整 PNG 结构：文件头魔数 + 尾部 IEND chunk（截断图缺 IEND 会被 assertCompletePng 拒绝）
+const png = Buffer.concat([
+  Buffer.from('89504e470d0a1a0a', 'hex'),
+  Buffer.from('0000000049454e44ae426082', 'hex'),
+]);
 
 function createExecution() {
   return {

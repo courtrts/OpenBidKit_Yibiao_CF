@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { ProgressBar, useToast } from '../../../shared/ui';
+import { AppDialog, ProgressBar, useToast } from '../../../shared/ui';
 import type { KnowledgeBaseIndex } from '../../knowledge-base/types';
 import type { OutlineData, OutlineItem } from '../../../shared/types';
 import { formatOutlineTitle } from '../../../shared/utils/outlineNumbering';
+import { formatDuration } from '../../../shared/utils/duration';
 import { DEFAULT_EXPORT_FORMAT } from '../../../shared/types/exportFormat';
 import type { FeasibilityBackgroundTaskState, FeasibilityOutlineTemplate, FeasibilitySaveOutlineRequest } from '../types';
 import { FEASIBILITY_OUTLINE_TEMPLATE_LABELS } from '../types';
@@ -75,13 +76,6 @@ function renumberWithMap(items: OutlineItem[], prefix = ''): { outline: OutlineI
   return { outline, idMap };
 }
 
-function formatDuration(milliseconds: number) {
-  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
-  const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
-  const seconds = (totalSeconds % 60).toString().padStart(2, '0');
-  return `${minutes}:${seconds}`;
-}
-
 function OutlinePage({
   outlineTemplate,
   targetWords,
@@ -108,6 +102,7 @@ function OutlinePage({
   const [editDescription, setEditDescription] = useState('');
   const [progressCollapsed, setProgressCollapsed] = useState(false);
   const [nowTick, setNowTick] = useState(() => Date.now());
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string; nodeCount: number } | null>(null);
   const logListRef = useRef<HTMLDivElement | null>(null);
 
   const selectedItem = useMemo(
@@ -375,7 +370,10 @@ function OutlinePage({
                   <div className="outline-detail-actions">
                     <button type="button" className="primary-action" onClick={() => { setEditTitle(selectedItem.title); setEditDescription(selectedItem.description || ''); setEditing(true); }} disabled={mutationLocked}>编辑</button>
                     <button type="button" className="secondary-action" onClick={() => { void addChild(selectedItem.id); }} disabled={mutationLocked}>添加子项</button>
-                    <button type="button" className="danger-action" onClick={() => { void deleteItem(selectedItem.id); }} disabled={mutationLocked}>删除</button>
+                    <button type="button" className="danger-action" onClick={() => {
+                      const nodeCount = collectIds([selectedItem]).length;
+                      setDeleteTarget({ id: selectedItem.id, title: selectedItem.title, nodeCount });
+                    }} disabled={mutationLocked}>删除</button>
                   </div>
                 </>
               )}
@@ -453,6 +451,34 @@ function OutlinePage({
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
+
+      <AppDialog
+        open={Boolean(deleteTarget)}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        kicker="删除目录项"
+        title={`确认删除“${deleteTarget?.title || ''}”`}
+        description={
+          deleteTarget && deleteTarget.nodeCount > 1
+            ? `该目录项共包含 ${deleteTarget.nodeCount} 个节点（含子级），删除后不可恢复。`
+            : '删除后该目录项及其写作重点将被移除，且不可恢复。'
+        }
+        actions={(
+          <>
+            <button type="button" className="secondary-action" onClick={() => setDeleteTarget(null)}>取消</button>
+            <button
+              type="button"
+              className="danger-action"
+              onClick={() => {
+                const target = deleteTarget;
+                setDeleteTarget(null);
+                if (target) void deleteItem(target.id);
+              }}
+            >
+              确认删除
+            </button>
+          </>
+        )}
+      />
     </div>
   );
 }

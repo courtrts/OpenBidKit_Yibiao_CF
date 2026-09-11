@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { TaskEventTask } from '../shared/types/ipc';
 import type { SectionId } from '../shared/types/navigation';
+import { formatDuration } from '../shared/utils/duration';
 
 // 任务类型 → 所在板块。与主进程 taskService 的 taskDefinitions.group 保持一致；
 // 未知类型兜底到技术方案（绝大多数任务属于该流程），避免静默丢失。
@@ -63,12 +64,7 @@ function BackgroundTaskTray({ onSectionChange }: BackgroundTaskTrayProps) {
   const formatElapsed = (startedAt: string, nowMs: number) => {
     const startedMs = Date.parse(startedAt);
     if (!Number.isFinite(startedMs)) return '';
-    const totalSeconds = Math.max(0, Math.floor((nowMs - startedMs) / 1000));
-    const hours = Math.floor(totalSeconds / 3600);
-    const minutes = Math.floor((totalSeconds % 3600) / 60);
-    const seconds = totalSeconds % 60;
-    const pad = (value: number) => String(value).padStart(2, '0');
-    return hours > 0 ? `${hours}:${pad(minutes)}:${pad(seconds)}` : `${pad(minutes)}:${pad(seconds)}`;
+    return formatDuration(nowMs - startedMs);
   };
 
   useEffect(() => {

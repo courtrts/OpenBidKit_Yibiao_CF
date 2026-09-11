@@ -349,10 +349,20 @@ async function deleteRows(env, rows) {
   await db.prepare(`UPDATE agent_error_logs SET status = 'deleting' WHERE id IN (${placeholders})`).bind(...ids).run();
   await bucket.delete(rows.map((row) => row.objectKey));
 
+  // 配额回滚以 DELETE 实际命中的行为准（RETURNING）：管理端删除与 cron 清理并发
+  // 选中同一批行时，只有真正删掉数据库行的调用方扣减 used_bytes，避免双倍回滚
+  // 让配额虚高、超额准入诊断包。
+  const deleted = await db.prepare(`
+    DELETE FROM agent_error_logs
+    WHERE id IN (${placeholders}) AND status IN ('ready', 'deleting')
+    RETURNING project_name AS projectName, object_key AS objectKey, compressed_bytes AS compressedBytes
+  `).bind(...ids).all();
+  const deletedRows = deleted.results || [];
+  if (!deletedRows.length) return { deletedCount: 0, deletedBytes: 0 };
+
   const bytesByProject = new Map();
-  rows.forEach((row) => bytesByProject.set(row.projectName, (bytesByProject.get(row.projectName) || 0) + number(row.compressedBytes)));
+  deletedRows.forEach((row) => bytesByProject.set(row.projectName, (bytesByProject.get(row.projectName) || 0) + number(row.compressedBytes)));
   await db.batch([
-    db.prepare(`DELETE FROM agent_error_logs WHERE id IN (${placeholders})`).bind(...ids),
     ...[...bytesByProject.entries()].map(([projectName, bytes]) => db.prepare(`
       UPDATE agent_error_settings
       SET used_bytes = MAX(0, used_bytes - ?), updated_at = ?
@@ -360,8 +370,8 @@ async function deleteRows(env, rows) {
     `).bind(bytes, nowIso(), projectName)),
   ]);
   return {
-    deletedCount: rows.length,
-    deletedBytes: rows.reduce((total, row) => total + number(row.compressedBytes), 0),
+    deletedCount: deletedRows.length,
+    deletedBytes: deletedRows.reduce((total, row) => total + number(row.compressedBytes), 0),
   };
 }
 

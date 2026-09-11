@@ -755,6 +755,13 @@ async function publishResolvedPluginLocked(env, resolved, options = {}) {
   }
 
   const existing = await readPlugin(env, resolved.id);
+  // sync 路径要求行仍存在：快照生成后插件被并发删除时，
+  // 不带此检查的 INSERT ON CONFLICT 会把已删除插件连同安装包一起复活。
+  if (options.mustExist && !existing) {
+    const error = createPluginError('插件在同步期间已被删除，跳过发布', 409);
+    error.syncSkipped = true;
+    throw error;
+  }
   const mirrored = await mirrorPluginPackage(env, resolved, existing);
   const sameVersion = existing?.version === mirrored.version;
   const previousRelease = await resolvePreviousRelease(env, existing, sameVersion, mirrored.version);
@@ -817,6 +824,7 @@ export async function syncAllPlugins(env) {
     return {
       totalCount: 0,
       syncedCount: 0,
+      skippedCount: 0,
       failedCount: 0,
       failures: [],
       cleanupDeletedCount: 0,
@@ -830,6 +838,7 @@ export async function syncAllPlugins(env) {
     ORDER BY id ASC
   `).all();
   let syncedCount = 0;
+  let skippedCount = 0;
   const failures = [];
 
   for (const row of result.results || []) {
@@ -847,9 +856,15 @@ export async function syncAllPlugins(env) {
         id: current.id,
         enabled: current.enabled,
         sortOrder: current.sortOrder,
+        mustExist: true,
       });
       syncedCount += 1;
     } catch (error) {
+      if (error?.syncSkipped) {
+        skippedCount += 1;
+        console.error(`[analytics] sync plugin skipped (deleted concurrently): ${current.id}`);
+        continue;
+      }
       const message = normalizeText(error?.message || String(error), 300) || '未知错误';
       failures.push({ id: current.id, message });
       console.error(`[analytics] sync plugin failed: ${current.id}`, message);
@@ -868,6 +883,7 @@ export async function syncAllPlugins(env) {
   return {
     totalCount: (result.results || []).length,
     syncedCount,
+    skippedCount,
     failedCount: failures.length,
     failures,
     cleanupDeletedCount,

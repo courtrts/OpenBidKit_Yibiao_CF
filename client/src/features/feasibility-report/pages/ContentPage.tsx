@@ -105,6 +105,7 @@ function ContentPage({
   const [preview, setPreview] = useState(true);
   const [statsCollapsed, setStatsCollapsed] = useState(false);
   const [pausePending, setPausePending] = useState(false);
+  const [savingChapter, setSavingChapter] = useState(false);
   const [exportFormat, setExportFormat] = useState<ExportFormatConfig>(() => withExportFormatDefaults(undefined));
   const leaves = useMemo(() => collectFeasibilityLeaves(outlineData?.outline || []), [outlineData]);
   const selectedItem = useMemo(() => {
@@ -142,9 +143,9 @@ function ContentPage({
   const phaseLabel = inReviewPhase ? '审校' : '正文生成';
   const displayProgressLabel = inReviewPhase ? '审校统计' : '生成统计';
   const statusMessage = failed
-    ? task?.error || latestLog || (inReviewPhase ? '自然化审校失败' : '正文生成失败')
+    ? task?.error || latestLog || (inReviewPhase ? '自然化审校失败' : '正文生成任务失败')
     : latestLog || (paused
-      ? '正文生成已暂停，可点击继续从中断处恢复。'
+      ? '正文生成已暂停，可导出当前已完成内容或点击继续。'
       : generatedCount === leaves.length && leaves.length
         ? `已生成 ${generatedCount} 个章节，可重新生成全文。`
         : generatedCount
@@ -337,7 +338,7 @@ function ContentPage({
                   label={`${phaseLabel}进度 ${progress}%`}
                 />
                 <p>{statusMessage}</p>
-                {failed && <small>{task?.error || latestLog || (inReviewPhase ? '自然化审校失败' : '正文生成失败')}</small>}
+                {failed && <small>{task?.error || latestLog || (inReviewPhase ? '自然化审校失败' : '正文生成任务失败')}</small>}
               </div>
             )}
           </div>
@@ -363,14 +364,16 @@ function ContentPage({
                   <button
                     type="button"
                     className="primary-action"
-                    disabled={locked}
+                    disabled={locked || savingChapter}
                     onClick={() => {
-                      if (!selectedItem) return;
+                      if (!selectedItem || savingChapter) return;
+                      setSavingChapter(true);
                       void onSave(selectedItem, draft)
-      .then(() => setEditing(false))
-      .catch(() => undefined);
+                        .then(() => setEditing(false))
+                        .catch(() => undefined)
+                        .finally(() => setSavingChapter(false));
                     }}
-                  >保存</button>
+                  >{savingChapter ? '保存中...' : '保存'}</button>
                   <button type="button" className="secondary-action" onClick={() => setEditing(false)}>取消</button>
                 </>
               ) : (
@@ -396,11 +399,11 @@ function ContentPage({
             </MarkdownFullscreenViewer>
           ) : selectedIsLeaf ? (
             <div className="markdown-empty-state content-generation-empty">
-              <strong>{selectedStatus === 'error' ? (task?.error || (inReviewPhase ? '自然化审校失败' : '正文生成失败')) : selectedStatus === 'running' ? (inReviewPhase ? '正在审校此章节' : '正在生成此章节') : '正文待生成'}</strong>
+              <strong>{selectedStatus === 'error' ? (task?.error || (inReviewPhase ? '自然化审校失败' : '正文生成任务失败')) : selectedStatus === 'running' ? (inReviewPhase ? '正在审校此章节' : '正在生成此章节') : '正文待生成'}</strong>
               <p>{selectedStatus === 'running'
                 ? '模型返回内容后会显示在这里。'
                 : paused
-                  ? '任务已暂停，可先导出当前内容或点击继续。'
+                  ? '正文生成已暂停，可导出当前已完成内容或点击继续。'
                   : running
                     ? '当前正在处理其他章节，完成后会更新这里的状态。'
                     : '点击右上角生成正文后，后台会按叶子章节撰写并自动审校。'}</p>

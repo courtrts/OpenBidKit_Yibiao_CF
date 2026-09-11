@@ -73,6 +73,7 @@ function FeasibilityReportHome({ registerLeaveGuard, onSectionChange }: Feasibil
   const [analysisDraft, setAnalysisDraft] = useState('');
   const [parametersDraft, setParametersDraft] = useState('');
   const [busyImport, setBusyImport] = useState(false);
+  const [pendingRemoveSource, setPendingRemoveSource] = useState<{ id: string; name: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
   const [exportOptions, setExportOptions] = useState<FeasibilityExportOptions>(DEFAULT_FEASIBILITY_EXPORT_OPTIONS);
@@ -259,13 +260,25 @@ function FeasibilityReportHome({ registerLeaveGuard, onSectionChange }: Feasibil
   };
 
   const removeSource = async (sourceId: string) => {
-    const result = await window.yibiao!.feasibilityReport.removeSourceDocument(sourceId);
-    if (!result.success) {
-      showToast(result.message || '移除失败', 'error');
-      return;
+    const target = state.sourceFiles.find((file) => file.id === sourceId);
+    setPendingRemoveSource({ id: sourceId, name: target?.fileName || '该资料' });
+  };
+
+  const confirmRemoveSource = async () => {
+    const target = pendingRemoveSource;
+    setPendingRemoveSource(null);
+    if (!target) return;
+    try {
+      const result = await window.yibiao!.feasibilityReport.removeSourceDocument(target.id);
+      if (!result.success) {
+        showToast(result.message || '移除失败', 'error');
+        return;
+      }
+      applyLoadedState(await window.yibiao!.feasibilityReport.loadState());
+      showToast(result.message || '已移除资料', 'success');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '移除资料失败', 'error');
     }
-    applyLoadedState(await window.yibiao!.feasibilityReport.loadState());
-    showToast(result.message || '已移除资料', 'success');
   };
 
   const startAnalysis = async () => {
@@ -715,6 +728,20 @@ function FeasibilityReportHome({ registerLeaveGuard, onSectionChange }: Feasibil
             <button type="button" className="primary-action" onClick={() => { void installPetPluginAndOpenChat(); }} disabled={installingPetPlugin}>
               {installingPetPlugin ? '正在安装...' : '安装并启用'}
             </button>
+          </>
+        )}
+      />
+
+      <AppDialog
+        open={Boolean(pendingRemoveSource)}
+        onOpenChange={(open) => !open && setPendingRemoveSource(null)}
+        kicker="移除资料"
+        title={`确认移除“${pendingRemoveSource?.name || ''}”`}
+        description="移除后将清空基于资料生成的分析、关键参数、目录和正文，且不可恢复。"
+        actions={(
+          <>
+            <button type="button" className="secondary-action" onClick={() => setPendingRemoveSource(null)}>取消</button>
+            <button type="button" className="danger-action" onClick={() => { void confirmRemoveSource(); }}>确认移除</button>
           </>
         )}
       />

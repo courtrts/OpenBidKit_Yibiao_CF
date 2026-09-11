@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { MarkdownEditor, MarkdownFullscreenViewer, MarkdownRenderer, ProgressBar, useToast } from '../../../shared/ui';
+import { formatDuration } from '../../../shared/utils/duration';
 import type { FeasibilityBackgroundTaskState } from '../types';
 
 interface ParametersPageProps {
@@ -12,13 +13,6 @@ interface ParametersPageProps {
   onChange: (value: string) => void;
   onSave: () => Promise<void>;
   onStart: () => Promise<void>;
-}
-
-function formatDuration(milliseconds: number) {
-  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
-  const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
-  const seconds = (totalSeconds % 60).toString().padStart(2, '0');
-  return `${minutes}:${seconds}`;
 }
 
 function ParametersPage({

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties, DragEvent } from 'react';
 import { trackConfigUsage } from '../../../shared/analytics/analytics';
 import { AppDialog, AppSwitch, ProgressBar, useToast } from '../../../shared/ui';
+import { formatDuration } from '../../../shared/utils/duration';
 import type { BackgroundTaskState, OutlineSelectionItem, SaveOutlineRequest, SaveOutlineSelectionRequest, TechnicalPlanWorkflowKind } from '../types';
 import type { KnowledgeBaseIndex, KnowledgeDocument } from '../../knowledge-base/types';
 import { OUTLINE_CONTENT_MODE_LABELS } from '../../../shared/types';
@@ -160,13 +161,6 @@ function collectOutlineIds(items: OutlineItem[], ids = new Set<string>()) {
 
 function collectRootIds(items: OutlineItem[]) {
   return new Set(items.map((item) => item.id));
-}
-
-function formatDuration(milliseconds: number) {
-  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
-  const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
-  const seconds = (totalSeconds % 60).toString().padStart(2, '0');
-  return `${minutes}:${seconds}`;
 }
 
 function renumberOutlineItemsWithIdMap(items: OutlineItem[], parentPrefix = ''): RenumberResult {

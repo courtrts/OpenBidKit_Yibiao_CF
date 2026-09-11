@@ -1589,6 +1589,7 @@ function SettingsPage({ onDeveloperModeChange, registerLeaveGuard }: SettingsPag
   const currentImageStatus = imageStatusMeta[imageModelStatus];
   const currentAgentSelfCheckStatus = agentSelfCheckStatusMeta[agentSelfCheckStatus];
   const imageTestTime = formatImageTestTime(state.imageModel.tested_at);
+  const activeTabLabel = settingsTabs.find((tab) => tab.id === activeTab)?.label || '当前';
   const settingsToolbarGroups: FloatingToolbarGroup[] = canSaveActiveTab
     ? [
         {
@@ -1596,7 +1597,7 @@ function SettingsPage({ onDeveloperModeChange, registerLeaveGuard }: SettingsPag
           actions: [
             {
               id: 'save-state',
-              label: activeTabDirty ? '未保存' : '已保存',
+              label: activeTabDirty ? `${activeTabLabel}·未保存` : '已保存',
               variant: 'ghost',
               disabled: true,
               onClick: () => undefined,
@@ -1608,10 +1609,10 @@ function SettingsPage({ onDeveloperModeChange, registerLeaveGuard }: SettingsPag
           actions: [
             {
               id: 'save',
-              label: '保存',
+              label: `保存「${activeTabLabel}」`,
               variant: 'primary',
               disabled: !activeTabDirty,
-              tooltip: activeTabDirty ? '保存当前设置' : '当前设置已保存',
+              tooltip: activeTabDirty ? `保存「${activeTabLabel}」板块的设置，其他板块需分别保存` : '当前板块设置已保存',
               onClick: saveActiveTabConfig,
             },
           ],

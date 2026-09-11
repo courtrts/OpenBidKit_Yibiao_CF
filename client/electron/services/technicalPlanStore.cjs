@@ -2342,6 +2342,10 @@ function createTechnicalPlanStore({ app, db, fileService, agentService, taskLogS
   }
 
   function saveGlobalFacts(globalFacts) {
+    // 保存会 replaceGlobalFacts 全删全插并清空正文生成状态：
+    // 任务运行中落进来会把任务刚写入的事实/正文状态整表冲掉，必须先守卫
+    assertNoTechnicalPlanTaskRunning();
+    assertContentEditingAllowed();
     const normalizedGlobalFacts = normalizeGlobalFactGroups(globalFacts);
     let savedTask;
     const transaction = db.transaction(() => {

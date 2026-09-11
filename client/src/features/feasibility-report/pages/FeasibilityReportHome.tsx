@@ -429,6 +429,7 @@ function FeasibilityReportHome({ registerLeaveGuard, onSectionChange }: Feasibil
           ...exportOptions,
           documentCode: String(exportOptions.documentCode || '').trim() || `KYBG-${Date.now().toString().slice(-6)}`,
           project_info: state.projectInfo,
+          keyParametersMarkdown: state.keyParametersMarkdown,
         },
       });
       if (result.canceled) {
@@ -793,7 +794,7 @@ function FeasibilityReportHome({ registerLeaveGuard, onSectionChange }: Feasibil
               <div>
                 <span className="section-kicker">Word 导出</span>
                 <Dialog.Title>选择导出模板</Dialog.Title>
-                <Dialog.Description>选择一个已保存模板后继续导出。可研封面、编制说明和基本情况附表在下方单独确认；注意：关键参数仅用于生成正文，不会作为附表单独导出。</Dialog.Description>
+                <Dialog.Description>选择一个已保存模板后继续导出。可研封面、编制说明和附表在下方单独确认；关键参数将作为「附表 2：关键参数表」随附表一并导出。</Dialog.Description>
               </div>
               <Dialog.Close className="detail-help-close" type="button" aria-label="关闭模板选择" disabled={isExporting}>×</Dialog.Close>
             </div>

@@ -1845,6 +1845,8 @@ function readFeasibilityExportContext(payload) {
     includeCover: options.includeCover !== false,
     includeNotes: options.includePreparationNotes !== false,
     includeAppendix: options.includeAppendixTables !== false,
+    // 关键参数随附表导出（附表 2）：此前只用于正文生成，导出物中不可见
+    keyParametersMarkdown: String(options.keyParametersMarkdown || ''),
   };
 }
 
@@ -2345,6 +2347,15 @@ async function buildDocxResult(payload, options = {}) {
   await addOutlineItems(children, payload.outline || [], context);
   if (feasibility?.includeAppendix) {
     children.push(...buildFeasibilityAppendixParagraphs(feasibility));
+    // 附表 2：关键参数。此前参数只作为正文生成的输入，导出物中不可见，
+    // 用户在第 4 步生成/手改的财务口径内容会完全丢失在最终文档之外。
+    const keyParametersMarkdown = String(feasibility.keyParametersMarkdown || '').trim();
+    if (keyParametersMarkdown) {
+      children.push(pageBreakParagraph());
+      children.push(paragraph([textRun('附表 2：关键参数表', { bold: true, size: 24, color: '333333' })], { after: 150 }));
+      await addMarkdownContent(children, keyParametersMarkdown, context, '关键参数附表');
+      children.push(paragraph([textRun('', { size: 18 })], { after: 300 }));
+    }
   }
   reportProgress(context, 90, '正在生成 Word 文件。');
 

@@ -201,6 +201,8 @@ class PluginService {
       // 安装/更新/批量升级的操作锁会被永久占用，只能重启应用恢复。
       const request = https.get(PLUGIN_MARKET_URL, (res) => {
         let data = '';
+        // chunked 流损坏等流级错误要有监听者，否则成为未捕获异常拖崩主进程
+        res.on('error', reject);
         res.on('data', (chunk) => { data += chunk; });
         res.on('end', () => {
           try {
@@ -403,6 +405,8 @@ class PluginService {
         'Content-Length': Buffer.byteLength(body),
       },
     }, (response) => response.resume());
+    // 市场服务器"已连接不响应"时 socket 永不结束，每次安装都新增一个挂起连接
+    request.setTimeout(60000, () => request.destroy());
     request.on('error', () => {});
     request.end(body);
   }
@@ -719,11 +723,40 @@ class PluginService {
     try {
       const wasEnabled = this.pluginStates[pluginId]?.enabled === true;
 
+      // 升级前备份旧目录：卸载→安装非原子，安装失败时把旧版 rename 回来，
+      // 避免"新版没装上、旧版也没了"两头空
+      const pluginsDir = this.getPluginsDir();
+      const pluginDir = path.join(pluginsDir, pluginId);
+      const backupDir = `${pluginDir}.update-backup-${Date.now()}`;
+      let backupCreated = false;
+      if (fs.existsSync(pluginDir)) {
+        fs.renameSync(pluginDir, backupDir);
+        backupCreated = true;
+      }
+
       stage = '卸载旧版本';
       await this.uninstallPlugin(pluginId, lock.token);
 
-      stage = '下载并安装新版本';
-      await this.installPlugin(pluginId, lock.token);
+      try {
+        stage = '下载并安装新版本';
+        await this.installPlugin(pluginId, lock.token);
+      } catch (installError) {
+        // 安装失败：还原备份的旧版本目录，状态随 uninstall 清掉后按原启用态恢复
+        if (backupCreated) {
+          try {
+            if (!fs.existsSync(pluginDir)) {
+              fs.renameSync(backupDir, pluginDir);
+              console.log('[plugin-service] 更新失败，已还原旧版本目录:', pluginId);
+            }
+          } catch (restoreError) {
+            console.error('[plugin-service] 还原旧版本目录失败:', pluginId, restoreError);
+          }
+        }
+        throw installError;
+      }
+      if (backupCreated && fs.existsSync(backupDir)) {
+        try { fs.rmSync(backupDir, { recursive: true, force: true }); } catch { /* 清理失败不影响升级成功 */ }
+      }
 
       if (wasEnabled) {
         stage = '恢复插件启用状态';

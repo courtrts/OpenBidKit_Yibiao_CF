@@ -4,6 +4,7 @@ import type { CSSProperties, DragEvent } from 'react';
 import { trackConfigUsage } from '../../../shared/analytics/analytics';
 import { AppDialog, AppSwitch, ProgressBar, useToast } from '../../../shared/ui';
 import { formatDuration } from '../../../shared/utils/duration';
+import { withExportFormatDefaults } from '../../export-format/exportFormatNormalize';
 import type { BackgroundTaskState, OutlineSelectionItem, SaveOutlineRequest, SaveOutlineSelectionRequest, TechnicalPlanWorkflowKind } from '../types';
 import type { KnowledgeBaseIndex, KnowledgeDocument } from '../../knowledge-base/types';
 import { OUTLINE_CONTENT_MODE_LABELS } from '../../../shared/types';
@@ -447,7 +448,7 @@ function OutlineEditPage({
     window.yibiao?.config.load().then((cfg) => {
       if (cancelled) return;
       if (cfg?.export_format) {
-        setExportFormat(cfg.export_format);
+        setExportFormat(withExportFormatDefaults(cfg.export_format));
       }
     }).catch(() => {});
     return () => { cancelled = true; };

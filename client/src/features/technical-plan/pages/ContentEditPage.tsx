@@ -12,6 +12,7 @@ import type { ExportFormatConfig } from '../../../shared/types/exportFormat';
 import { DEFAULT_EXPORT_FORMAT } from '../../../shared/types/exportFormat';
 import { buildExportFormatCssVars } from '../../../shared/utils/exportFormatCss';
 import { formatOutlineTitle } from '../../../shared/utils/outlineNumbering';
+import { withExportFormatDefaults } from '../../export-format/exportFormatNormalize';
 import aiImageExampleUrl from '../../../../assets/generate_img_example/ai.png';
 import mermaidImageExampleUrl from '../../../../assets/generate_img_example/mermaid.png';
 import htmlImageExampleUrl from '../../../../assets/generate_img_example/html.png';
@@ -661,7 +662,7 @@ function ContentEditPage({
         setDeveloperMode(Boolean(config.developer_mode));
         setImageModelStatus(config.image_model?.status || 'untested');
         if (config.export_format) {
-          setExportFormat(config.export_format);
+          setExportFormat(withExportFormatDefaults(config.export_format));
         }
       })
       .catch((error) => console.warn('读取开发者模式失败', error));

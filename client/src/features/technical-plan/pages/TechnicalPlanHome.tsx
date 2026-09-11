@@ -634,7 +634,7 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
     let cancelled = false;
     window.yibiao?.config.load().then((cfg) => {
       if (!cancelled && cfg?.export_format) {
-        setExportFormat(cfg.export_format);
+        setExportFormat(withExportFormatDefaults(cfg.export_format));
       }
     }).catch(() => {});
     return () => { cancelled = true; };

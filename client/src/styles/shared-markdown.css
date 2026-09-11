@@ -636,6 +636,17 @@
   border-bottom: 1px solid var(--yb-border-soft);
 }
 
+/* 编辑器底部实时字符数：长文撰写时无需全选复制到别处估算篇幅 */
+.markdown-editor-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 4px 14px 8px;
+  color: var(--yb-text-soft);
+  font-size: 12px;
+  border-top: 1px solid var(--yb-border-soft);
+  background: #ffffff;
+}
+
 .markdown-editor-toolbar-spacer {
   flex: 1 1 auto;
 }

@@ -88,6 +88,9 @@ function MarkdownEditor({
           placeholder={placeholder}
           disabled={disabled}
         />
+        <div className="markdown-editor-footer">
+          <span>{`${value.length.toLocaleString('zh-CN')} 字符`}</span>
+        </div>
       </div>
       <Dialog.Portal>
         <Dialog.Overlay className="markdown-fullscreen-overlay" />
@@ -113,6 +116,9 @@ function MarkdownEditor({
               placeholder={placeholder}
               disabled={disabled}
             />
+            <div className="markdown-editor-footer">
+              <span>{`${value.length.toLocaleString('zh-CN')} 字符`}</span>
+            </div>
           </div>
         </Dialog.Content>
       </Dialog.Portal>

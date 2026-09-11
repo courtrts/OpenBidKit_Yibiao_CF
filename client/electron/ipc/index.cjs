@@ -35,7 +35,7 @@ const { createLicenseService } = require('../services/licenseService.cjs');
 const { createRejectionCheckStore } = require('../services/rejectionCheckStore.cjs');
 const { createSqliteDatabase } = require('../services/sqliteDatabase.cjs');
 const { createSystemFontService } = require('../services/systemFontService.cjs');
-const { clearOrphanedGeneratedImages, clearStalePiTaskArchives, runHistoricalStorageCleanup } = require('../services/storageCleanupService.cjs');
+const { clearOrphanedGeneratedImages, clearStalePiTaskArchives, runHistoricalStorageCleanup, sweepAgedStartupArtifacts } = require('../services/storageCleanupService.cjs');
 const { createTaskService } = require('../services/taskService.cjs');
 const { createAgentWorkspaceService } = require('../services/agentWorkspaceService.cjs');
 const { createTaskLogStore } = require('../services/taskLogStore.cjs');
@@ -266,6 +266,7 @@ function registerWorkspaceDatabaseServices({ app, configStore, aiService, agentS
   // 清理上次强制删除时因占用未能物理删除、被移入回收目录的残留
   cleanupTrashDirSync(getWorkspaceTrashDir(app));
   clearOrphanedGeneratedImages(app, sqliteDatabase.db);
+  sweepAgedStartupArtifacts(app);
   const taskLogStore = createTaskLogStore({ db: sqliteDatabase.db });
   const knowledgeBaseStore = createKnowledgeBaseStore({ app, db: sqliteDatabase.db });
   const knowledgeBaseService = createKnowledgeBaseService({ app, aiService, configStore, knowledgeBaseStore });

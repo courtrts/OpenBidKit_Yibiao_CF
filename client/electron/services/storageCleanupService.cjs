@@ -3,8 +3,10 @@ const path = require('node:path');
 const {
   getAgentRuntimeDir,
   getGeneratedImagesDir,
+  getImportedImagesDir,
   getWorkspaceDir,
 } = require('../utils/paths.cjs');
+const { getMermaidCacheDir } = require('../utils/mermaidCache.cjs');
 const {
   OUTLINE_AGENT_TASK_KEY,
   TEMPLATE_EXTRACTION_AGENT_TASK_KEY,
@@ -134,9 +136,46 @@ function runHistoricalStorageCleanup({ app, db, configStore, onStatus }) {
   return { completed: failures.length === 0, skipped: false, failures };
 }
 
+// 启动时按 mtime 清扫会持续膨胀的可再生目录：日志 14 天、mermaid 缓存 30 天、
+// 导入图片孤儿批次 7 天。全部为可再生/可再生成内容，失败只记日志不阻塞启动。
+function sweepAgedFiles(dir, maxAgeMs, nowMs = Date.now()) {
+  if (!fs.existsSync(dir)) return;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const fullPath = path.join(dir, entry.name);
+    try {
+      if (entry.isDirectory()) {
+        sweepAgedFiles(fullPath, maxAgeMs, nowMs);
+        if (fs.readdirSync(fullPath).length === 0) removePath(fullPath);
+        continue;
+      }
+      const stat = fs.statSync(fullPath);
+      if (nowMs - stat.mtimeMs > maxAgeMs) removePath(fullPath);
+    } catch (error) {
+      console.warn('[storage-cleanup] 清理过期文件失败（已忽略）:', fullPath, error?.message || String(error));
+    }
+  }
+}
+
+function sweepAgedStartupArtifacts(app) {
+  const day = 24 * 60 * 60 * 1000;
+  const targets = [
+    { label: 'AI/开发日志', dir: path.join(app.getPath('userData'), 'logs'), maxAge: 14 * day },
+    { label: 'mermaid 渲染缓存', dir: getMermaidCacheDir(app), maxAge: 30 * day },
+    { label: '导入图片孤儿批次', dir: getImportedImagesDir(app), maxAge: 7 * day },
+  ];
+  for (const { label, dir, maxAge } of targets) {
+    try {
+      sweepAgedFiles(dir, maxAge);
+    } catch (error) {
+      console.warn(`[storage-cleanup] 清理${label}失败`, error?.message || String(error));
+    }
+  }
+}
+
 module.exports = {
   STORAGE_CLEANUP_VERSION,
   clearOrphanedGeneratedImages,
   clearStalePiTaskArchives,
   runHistoricalStorageCleanup,
+  sweepAgedStartupArtifacts,
 };

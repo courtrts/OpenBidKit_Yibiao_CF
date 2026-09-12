@@ -24,6 +24,7 @@ const {
   TEMPLATE_EXTRACTION_AGENT_TASK_KEY,
 } = require('./outlineGenerationAgentV2Config.cjs');
 const { GLOBAL_FACTS_AGENT_TASK_KEY } = require('./globalFactsAgentV2Config.cjs');
+const { collectGeneratedImageReferences } = require('./storageCleanupService.cjs');
 
 const tenderMarkdownRelativePath = path.join('technical-plan', 'tender.md').replace(/\\/g, '/');
 const tenderOriginalMarkdownRelativePath = path.join('technical-plan', 'tender-original.md').replace(/\\/g, '/');
@@ -1396,11 +1397,11 @@ function createTechnicalPlanStore({ app, db, fileService, agentService, taskLogS
   function deleteGeneratedIllustrationAssets(assetUrls) {
     const generatedImagesDir = path.resolve(getGeneratedImagesDir(app));
     const prefix = 'yibiao-asset://generated-images/';
+    // 引用判定与启动清扫共用 collectGeneratedImageReferences（双表全量相对路径集合）：
+    // 逐 URL 的 2N 次查询降为 2 次全量查询 + 集合查找，且两套实现不再可能漂移。
+    const references = collectGeneratedImageReferences(db);
     for (const assetUrl of new Set(assetUrls || [])) {
       const originalSource = String(assetUrl || '');
-      const retainedByPlan = db.prepare('SELECT 1 FROM technical_plan_illustration_items WHERE generation_asset_url = ? LIMIT 1').get(originalSource);
-      const stillReferenced = db.prepare('SELECT 1 FROM technical_plan_outline_nodes WHERE instr(content, ?) > 0 LIMIT 1').get(originalSource);
-      if (retainedByPlan || stillReferenced) continue;
       const source = originalSource.split('?')[0];
       if (!source.startsWith(prefix)) continue;
       let relativePath;
@@ -1409,6 +1410,7 @@ function createTechnicalPlanStore({ app, db, fileService, agentService, taskLogS
       } catch {
         continue;
       }
+      if (references.has(relativePath)) continue;
       const filePath = path.resolve(generatedImagesDir, relativePath);
       if (filePath === generatedImagesDir || !filePath.startsWith(`${generatedImagesDir}${path.sep}`)) continue;
       fs.rmSync(filePath, { force: true });

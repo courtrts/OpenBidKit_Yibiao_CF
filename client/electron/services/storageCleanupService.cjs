@@ -3,7 +3,6 @@ const path = require('node:path');
 const {
   getAgentRuntimeDir,
   getGeneratedImagesDir,
-  getImportedImagesDir,
   getWorkspaceDir,
 } = require('../utils/paths.cjs');
 const { getMermaidCacheDir } = require('../utils/mermaidCache.cjs');
@@ -26,6 +25,15 @@ const LEGACY_WORKSPACE_FILES = [
   'duplicate_check.json',
   'rejection_check.json',
 ];
+// 历史清理步骤清单：与 configStore 的 storage_cleanup_failed_steps 持久化列表配套，
+// 失败步骤下次启动只重试自己（标签集合是两侧的共同契约）。
+const HISTORICAL_CLEANUP_STEP_LABELS = [
+  '清理旧 Agent 运行目录',
+  '清理普通 Pi 任务归档',
+  '清理旧 Agent 缓存',
+  '清理废弃工作区状态',
+  '清理未引用的旧生图',
+];
 
 function removePath(targetPath) {
   fs.rmSync(targetPath, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
@@ -36,7 +44,14 @@ function clearDirectoryExcept(directory, retainedNames) {
   const retained = new Set(retainedNames);
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
     if (retained.has(entry.name)) continue;
-    removePath(path.join(directory, entry.name));
+    const fullPath = path.join(directory, entry.name);
+    try {
+      removePath(fullPath);
+    } catch (error) {
+      // 逐条目隔离：单文件被杀软/预览占用（EBUSY/EPERM）不应让同批剩余条目全部
+      // 顺延到下次启动（此前循环内无 try/catch，一处失败整批中断）。
+      console.warn('[storage-cleanup] 清理条目失败（已继续后续条目）:', fullPath, error?.message || String(error));
+    }
   }
 }
 
@@ -52,11 +67,15 @@ function clearStalePiTaskArchives(app) {
   }
 }
 
+// 收集技术方案两张引用表中出现的全部生成图相对路径（根级文件与子目录文件都收，
+// 保留解码后的真实文件名）。启动清扫与运行时删除（technicalPlanStore 的
+// deleteGeneratedIllustrationAssets）共用本实现，避免"引用白名单"双实现漂移
+// 导致仍被引用的 AI 生图被静默误删（AI 产物重新生成结果不同，不可再生）。
 function collectGeneratedImageReferences(db) {
   const references = new Set();
   const collect = (value) => {
     const source = String(value || '');
-    const pattern = /yibiao-asset:\/\/generated-images\/([^/?#\s"'<>\)]+)/g;
+    const pattern = /yibiao-asset:\/\/generated-images\/([^?#\s"'<>\)]+)/g;
     for (const match of source.matchAll(pattern)) {
       try {
         references.add(decodeURIComponent(match[1]));
@@ -85,7 +104,14 @@ function clearUnreferencedRootGeneratedImages(app, db) {
   const references = collectGeneratedImageReferences(db);
   for (const entry of fs.readdirSync(imagesDir, { withFileTypes: true })) {
     if (!entry.isFile() || references.has(entry.name)) continue;
-    removePath(path.join(imagesDir, entry.name));
+    const fullPath = path.join(imagesDir, entry.name);
+    try {
+      // 删除留痕：根级生图一旦被误判为"未引用"即不可逆，留下文件名+大小便于追溯。
+      console.log(`[storage-cleanup] 删除未引用生图 ${entry.name}（${fs.statSync(fullPath).size} bytes）`);
+      removePath(fullPath);
+    } catch (error) {
+      console.warn('[storage-cleanup] 删除未引用生图失败（已继续后续条目）:', fullPath, error?.message || String(error));
+    }
   }
 }
 
@@ -98,62 +124,117 @@ function clearOrphanedGeneratedImages(app, db) {
   }
 }
 
-// 新清理版本首次启动时清除历史遗留；失败不阻止启动，也不写完成标记。
+// 新清理版本首次启动时清除历史遗留；失败不阻止启动。
+// 完成标记与失败步骤列表一起写：失败步骤下次启动只重试自己，
+// 此前任一步失败就不写标记，长期被占用的目录会让每次启动全量重跑。
 function runHistoricalStorageCleanup({ app, db, configStore, onStatus }) {
   const config = configStore.load();
-  if (Number(config.storage_cleanup_version || 0) >= STORAGE_CLEANUP_VERSION) {
-    return { completed: true, skipped: true };
-  }
-
-  onStatus?.({ phase: 'cleaning', message: '正在清理历史缓存文件' });
-  const failures = [];
-  const run = (label, action) => {
-    try {
-      action();
-    } catch (error) {
-      failures.push({ label, error: error?.message || String(error) });
-      console.warn(`[storage-cleanup] ${label}失败`, error?.message || String(error));
+  const completedVersion = Number(config.storage_cleanup_version || 0);
+  const rawFailedSteps = Array.isArray(config.storage_cleanup_failed_steps)
+    ? config.storage_cleanup_failed_steps
+    : [];
+  const pendingLabels = new Set(
+    rawFailedSteps.filter((label) => HISTORICAL_CLEANUP_STEP_LABELS.includes(label)),
+  );
+  if (completedVersion >= STORAGE_CLEANUP_VERSION) {
+    if (pendingLabels.size === 0) {
+      // 无待重试步骤即跳过；顺带清掉清单外的过期标签，不让其常驻配置。
+      if (rawFailedSteps.length > 0) {
+        configStore.save({ storage_cleanup_failed_steps: [] });
+      }
+      return { completed: true, skipped: true };
     }
-  };
+  }
 
   const userDataDir = app.getPath('userData');
   const workspaceDir = getWorkspaceDir(app);
   const agentRuntimeDir = getAgentRuntimeDir(app);
-  run('清理旧 Agent 运行目录', () => clearDirectoryExcept(agentRuntimeDir, ['pi']));
-  run('清理普通 Pi 任务归档', () => clearDirectoryExcept(
-    path.join(agentRuntimeDir, 'pi', 'tasks'),
-    PERSISTENT_AGENT_TASK_KEYS,
-  ));
-  run('清理旧 Agent 缓存', () => removePath(path.join(userDataDir, 'agent-cache')));
-  run('清理废弃工作区状态', () => {
-    LEGACY_WORKSPACE_FILES.forEach((fileName) => removePath(path.join(workspaceDir, fileName)));
-  });
-  run('清理未引用的旧生图', () => clearUnreferencedRootGeneratedImages(app, db));
+  const steps = [
+    { label: '清理旧 Agent 运行目录', action: () => clearDirectoryExcept(agentRuntimeDir, ['pi']) },
+    { label: '清理普通 Pi 任务归档', action: () => clearDirectoryExcept(
+      path.join(agentRuntimeDir, 'pi', 'tasks'),
+      PERSISTENT_AGENT_TASK_KEYS,
+    ) },
+    { label: '清理旧 Agent 缓存', action: () => removePath(path.join(userDataDir, 'agent-cache')) },
+    { label: '清理废弃工作区状态', action: () => {
+      LEGACY_WORKSPACE_FILES.forEach((fileName) => removePath(path.join(workspaceDir, fileName)));
+    } },
+    { label: '清理未引用的旧生图', action: () => clearUnreferencedRootGeneratedImages(app, db) },
+  ];
+  const due = completedVersion >= STORAGE_CLEANUP_VERSION
+    ? steps.filter((step) => pendingLabels.has(step.label))
+    : steps;
 
-  if (!failures.length) {
-    run('记录历史清理版本', () => configStore.save({ storage_cleanup_version: STORAGE_CLEANUP_VERSION }));
+  onStatus?.({ phase: 'cleaning', message: '正在清理历史缓存文件' });
+  const failures = [];
+  for (const step of due) {
+    try {
+      step.action();
+    } catch (error) {
+      failures.push(step.label);
+      console.warn(`[storage-cleanup] ${step.label}失败`, error?.message || String(error));
+    }
+  }
+  try {
+    configStore.save({
+      storage_cleanup_version: STORAGE_CLEANUP_VERSION,
+      storage_cleanup_failed_steps: failures,
+    });
+  } catch (error) {
+    console.warn('[storage-cleanup] 记录历史清理状态失败', error?.message || String(error));
   }
   return { completed: failures.length === 0, skipped: false, failures };
 }
 
-// 启动时按 mtime 清扫会持续膨胀的可再生目录：日志 14 天、mermaid 缓存 30 天、
-// 导入图片孤儿批次 7 天。全部为可再生/可再生成内容，失败只记日志不阻塞启动。
-function sweepAgedFiles(dir, maxAgeMs, nowMs = Date.now()) {
+// 启动时按 mtime 清扫会持续膨胀的可再生目录：日志 14 天、mermaid 缓存 30 天。
+// 年龄以"目录树内最新 mtime"为锚点（相对年龄）而非墙钟：NTP/手动校时前跳不会
+// 把几天前的文件误判为超龄；正常时钟下锚点≈当前时间，语义一致且更保守。
+// 注意：imported-images 不在此列——批次生命周期归业务 scope 的显式删除
+// （各 preserveImages 链路的 clear/delete 入口，如查重内容清空），其内容
+// 无 TTL 永久留存，曾按 7 天裸 mtime 清扫会删掉仍被引用的活跃图片批次。
+function sweepAgedFiles(dir, maxAgeMs) {
   if (!fs.existsSync(dir)) return;
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const fullPath = path.join(dir, entry.name);
-    try {
-      if (entry.isDirectory()) {
-        sweepAgedFiles(fullPath, maxAgeMs, nowMs);
-        if (fs.readdirSync(fullPath).length === 0) removePath(fullPath);
-        continue;
+  const files = [];
+  let anchorMs = 0;
+  const collect = (currentDir) => {
+    for (const entry of fs.readdirSync(currentDir, { withFileTypes: true })) {
+      const fullPath = path.join(currentDir, entry.name);
+      try {
+        if (entry.isDirectory()) {
+          collect(fullPath);
+        } else {
+          const stat = fs.statSync(fullPath);
+          if (stat.mtimeMs > anchorMs) anchorMs = stat.mtimeMs;
+          files.push({ fullPath, mtimeMs: stat.mtimeMs });
+        }
+      } catch (error) {
+        console.warn('[storage-cleanup] 读取过期文件信息失败（已忽略）:', fullPath, error?.message || String(error));
       }
-      const stat = fs.statSync(fullPath);
-      if (nowMs - stat.mtimeMs > maxAgeMs) removePath(fullPath);
+    }
+  };
+  collect(dir);
+  if (!anchorMs) return;
+  for (const { fullPath, mtimeMs } of files) {
+    try {
+      if (anchorMs - mtimeMs > maxAgeMs) removePath(fullPath);
     } catch (error) {
       console.warn('[storage-cleanup] 清理过期文件失败（已忽略）:', fullPath, error?.message || String(error));
     }
   }
+  // 清空的子目录连带删除（不删清扫根目录本身）。
+  const prune = (currentDir) => {
+    for (const entry of fs.readdirSync(currentDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const fullPath = path.join(currentDir, entry.name);
+      try {
+        prune(fullPath);
+        if (fs.readdirSync(fullPath).length === 0) removePath(fullPath);
+      } catch (error) {
+        console.warn('[storage-cleanup] 清理空目录失败（已忽略）:', fullPath, error?.message || String(error));
+      }
+    }
+  };
+  prune(dir);
 }
 
 function sweepAgedStartupArtifacts(app) {
@@ -161,7 +242,6 @@ function sweepAgedStartupArtifacts(app) {
   const targets = [
     { label: 'AI/开发日志', dir: path.join(app.getPath('userData'), 'logs'), maxAge: 14 * day },
     { label: 'mermaid 渲染缓存', dir: getMermaidCacheDir(app), maxAge: 30 * day },
-    { label: '导入图片孤儿批次', dir: getImportedImagesDir(app), maxAge: 7 * day },
   ];
   for (const { label, dir, maxAge } of targets) {
     try {
@@ -178,4 +258,9 @@ module.exports = {
   clearStalePiTaskArchives,
   runHistoricalStorageCleanup,
   sweepAgedStartupArtifacts,
+  __test: {
+    sweepAgedFiles,
+    collectGeneratedImageReferences,
+    HISTORICAL_CLEANUP_STEP_LABELS,
+  },
 };

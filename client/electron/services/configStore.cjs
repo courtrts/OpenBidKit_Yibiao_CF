@@ -284,6 +284,7 @@ const defaultConfig = {
   developer_token_stats_auto_open: false,
   developer_agent_monitor_auto_open: false,
   storage_cleanup_version: 0,
+  storage_cleanup_failed_steps: [],
   analytics_client_id: '',
   analytics_created_at: '',
 };
@@ -761,6 +762,14 @@ function normalizeConfig(config) {
     storage_cleanup_version: Number.isFinite(Number(source.storage_cleanup_version))
       ? Math.max(0, Math.floor(Number(source.storage_cleanup_version)))
       : defaultConfig.storage_cleanup_version,
+    // 历史清理失败步骤列表（storageCleanupService 下次启动只重试这些步骤）：
+    // 只保留字符串并去重限长，防止异常值进配置。
+    storage_cleanup_failed_steps: Array.isArray(source.storage_cleanup_failed_steps)
+      ? Array.from(new Set(source.storage_cleanup_failed_steps
+        .filter((label) => typeof label === 'string' && label.trim())
+        .map((label) => label.trim())))
+        .slice(0, 16)
+      : defaultConfig.storage_cleanup_failed_steps,
     analytics_client_id: source.analytics_client_id || defaultConfig.analytics_client_id,
     analytics_created_at: source.analytics_created_at || defaultConfig.analytics_created_at,
   };

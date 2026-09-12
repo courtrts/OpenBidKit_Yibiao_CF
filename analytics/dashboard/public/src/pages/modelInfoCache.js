@@ -163,14 +163,20 @@ export async function loadModelInfoCache(options = {}) {
   }
 }
 
-// 手动触发模型目录源同步。
-export async function syncModelInfoCache() {
+// 手动触发模型目录源同步。force=true 时跳过服务端的空目录/骤降保护
+// （目录源异常场景下的合法覆盖通道，页面上二次确认）。
+export async function syncModelInfoCache(force = false) {
+  const forced = force === true;
   try {
     assertAdminToken();
     saveSettings();
+    if (forced && !window.confirm('强制同步会在源目录为空或模型数骤降时仍覆盖本地模型索引，继续？')) {
+      return;
+    }
     state.syncModelInfoCacheButton.disabled = true;
-    setModelInfoCacheStatus('正在从当前模型目录源同步模型信息...', '');
-    await requestJson('/api/model-info-cache', { method: 'POST' });
+    state.forceSyncModelInfoCacheButton.disabled = true;
+    setModelInfoCacheStatus(forced ? '正在强制同步模型目录（跳过空目录/骤降保护）...' : '正在从当前模型目录源同步模型信息...', '');
+    await requestJson('/api/model-info-cache', { method: 'POST', body: forced ? { force: true } : undefined });
     await loadModelInfoCache({ quiet: true });
     setModelInfoCacheStatus('模型信息同步完成，人工修改记录已保留。', 'ok');
   } catch (error) {
@@ -178,6 +184,7 @@ export async function syncModelInfoCache() {
     await loadModelInfoCache({ quiet: true }).catch(() => undefined);
   } finally {
     state.syncModelInfoCacheButton.disabled = false;
+    state.forceSyncModelInfoCacheButton.disabled = false;
   }
 }
 

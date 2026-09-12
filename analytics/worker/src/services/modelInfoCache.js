@@ -13,6 +13,17 @@ const MODALITY_ORDER = ['text', 'image', 'pdf', 'audio', 'video'];
 const CAPABILITY_STATUSES = new Set(['supported', 'unsupported', 'mixed', 'unknown']);
 const DEFAULT_CONCURRENCY_LIMIT = 10;
 const DEFAULT_REQUEST_MODE = 'stream';
+// 模型目录源响应体上限：无上限的 response.text() 会被篡改/故障源返回的超大
+// JSON 顶穿 isolate 内存上限（1101），故流式读取并在超限即中止。
+const MODEL_INFO_SOURCE_MAX_BYTES = 20 * 1024 * 1024;
+// 失败响应的错误体只需要留诊断片段，上限远小于目录体。
+const MODEL_INFO_ERROR_BODY_MAX_BYTES = 2048;
+// 人工覆盖条数上限：覆盖存于单个 KV 值，公开读路径每次请求都整体 parse，
+// 条数不设上限会让读成本随脚本化保存单调上涨。
+const MODEL_INFO_MAX_OVERRIDES = 1000;
+// 空目录/骤降保护阈值：源返回 200 空壳（网关错误体、路径配错）或模型数较
+// 上次成功目录跌去九成以上，默认按同步失败处理并保留旧索引（force 可覆盖）。
+const MODEL_INFO_DROP_GUARD_RATIO = 0.1;
 
 // 清理并稳定排序模型输入、输出模态。
 function normalizeModalities(values) {
@@ -203,7 +214,7 @@ export async function readModelInfoCacheStatus(env) {
 // 索引解析结果的 isolate 级记忆化。目录同步后索引 JSON 可达数 MB，
 // 每次请求整体 JSON.parse 会吃掉免费套餐 10ms CPU 预算的大头（同步前索引为
 // null、成本为零，问题只出现在同步后的公开 /model-info 与管理端列表页）。
-// 键取 status 小对象里的 syncedAt|sourceBytes（一次小 KV 读即可判定）：
+// 键取 status 小对象里的 lastSuccessAt|sourceBytes（一次小 KV 读即可判定）：
 // 键不变直接复用已解析对象；sync 先写索引再写 status，至多一个秒级窗口内
 // 读到旧解析结果，对目录型数据可接受。GET 抛错时不更新键，下次请求自动重试。
 let indexMemo = { key: '', value: null };
@@ -211,7 +222,7 @@ let indexMemo = { key: '', value: null };
 export async function readModelInfoCacheIndex(env) {
   if (!env.NOTICE_STORE) return null;
   const status = await readModelInfoCacheStatus(env);
-  const key = status ? `${status.syncedAt || ''}|${status.sourceBytes ?? ''}` : 'empty';
+  const key = status ? `${status.lastSuccessAt || ''}|${status.sourceBytes ?? ''}` : 'empty';
   if (indexMemo.key === key) {
     return indexMemo.value;
   }
@@ -224,12 +235,15 @@ export async function readModelInfoCacheIndex(env) {
       parsed = null;
     }
   }
-  // 只缓存解析成功的结果：解析失败（null）不更新键，下一次请求会重新
-  // 读取 KV 重试，避免一次坏数据被记忆化“固化”成持续 503。
-  if (parsed) {
+  // 只缓存解析成功且版本匹配的索引：解析失败（null）不更新键，下一次请求会
+  // 重新读取 KV 重试，避免一次坏数据被记忆化“固化”成持续 503；CACHE_VERSION
+  // 升级后残留的旧版索引按不可用处理（触发下次同步重建），而不是被
+  // normalize 逐字段静默兜底。
+  if (parsed && parsed.version === CACHE_VERSION) {
     indexMemo = { key, value: parsed };
+    return parsed;
   }
-  return parsed;
+  return null;
 }
 
 // 读取管理员人工覆盖记录；该数据不会被自动同步任务修改。
@@ -309,6 +323,12 @@ export async function listAdminModelInfo(env, options = {}) {
 // 保存一条完整的管理员人工覆盖记录。
 export async function saveModelInfoOverride(env, modelName, model) {
   const overrides = await readModelInfoOverrides(env);
+  // 新增覆盖（非更新已有条目）时校验总条数，防止脚本化保存让单 KV 值逼近 25MB。
+  if (!overrides.models[modelName] && Object.keys(overrides.models).length >= MODEL_INFO_MAX_OVERRIDES) {
+    const error = new Error(`人工覆盖已达 ${MODEL_INFO_MAX_OVERRIDES} 条上限，请先删除部分覆盖再保存`);
+    error.statusCode = 400;
+    throw error;
+  }
   const record = normalizeModelInfoRecord(model);
   overrides.models[modelName] = {
     ...record,
@@ -335,6 +355,10 @@ export async function deleteModelInfoOverride(env, modelName) {
 
 // 校验模型目录源地址。只允许 http(s)，并拒绝回环、链路本地、云元数据和内网地址，
 // 防止管理端把数据源指向内网服务（SSRF）。自部署 models.dev 兼容目录请提供公网可达域名。
+// IPv6 字面量在 URL.hostname 中带方括号，且 127.0.0.1/169.254.169.254 等内网地址
+// 可以 IPv6 形式（::1、::ffff:127.0.0.1）表达——先剥离方括号、把 IPv4 映射地址
+// 还原成内嵌 IPv4 走同一套规则，其余仍含 ':' 的 host 全部是 IPv6 形式，合法目录
+// 源都是域名，一律拒绝，堵住前缀黑名单被 IPv6 写法绕过的缺口。
 export function validateModelInfoSourceUrl(value) {
   const text = String(value || '').trim();
   let url;
@@ -346,9 +370,12 @@ export function validateModelInfoSourceUrl(value) {
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     return { ok: false, message: 'sourceUrl 仅支持 http/https' };
   }
-  const host = url.hostname.toLowerCase();
+  let host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  const mappedIpv4 = host.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/);
+  if (mappedIpv4) host = mappedIpv4[1];
   if (
-    host === 'localhost'
+    host.includes(':')
+    || host === 'localhost'
     || host.endsWith('.local')
     || host.endsWith('.internal')
     || host === 'metadata.google.internal'
@@ -358,9 +385,6 @@ export function validateModelInfoSourceUrl(value) {
     || host.startsWith('192.168.')
     || /^172\.(1[6-9]|2\d|3[01])\./.test(host)
     || host === '0.0.0.0'
-    || host === '::'
-    || host === '::1'
-    || host === '[::]'
   ) {
     return { ok: false, message: 'sourceUrl 不允许指向内网/回环/元数据地址，请使用公网可达域名' };
   }
@@ -412,8 +436,36 @@ export async function saveModelInfoSourceUrl(env, sourceUrl) {
   return { cleared: false, sourceUrl: checked.sourceUrl };
 }
 
+// 读取响应体并施加字节上限：Content-Length 预检 + 流式累计，超限立即中止。
+// 外部目录源不受信任，无上限的 response.text() 会被超大响应顶穿 isolate 内存。
+async function readBodyCapped(response, maxBytes) {
+  const declaredLength = Number(response.headers.get('content-length') || 0);
+  if (declaredLength > maxBytes) {
+    throw new Error('model info source response too large');
+  }
+  if (!response.body) return response.text();
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder('utf-8');
+  let text = '';
+  let bytes = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) {
+      bytes += value.length;
+      if (bytes > maxBytes) {
+        await reader.cancel().catch(() => {});
+        throw new Error('model info source response too large');
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+  }
+  return text + decoder.decode();
+}
+
 // 从配置的目录源同步模型信息并原子替换客户端使用的精简索引。
-export async function syncModelInfoCache(env, trigger = 'manual') {
+// options.force=true 时跳过空目录/骤降保护（dashboard「强制同步」按钮）。
+export async function syncModelInfoCache(env, trigger = 'manual', options = {}) {
   if (!env.NOTICE_STORE) throw new Error('NOTICE_STORE is not configured');
 
   const { sourceUrl } = await resolveModelInfoSourceUrl(env);
@@ -428,12 +480,28 @@ export async function syncModelInfoCache(env, trigger = 'manual') {
       cache: 'no-store',
     }, 30000);
     if (!response.ok) {
-      throw new Error(`models.dev API ${response.status}: ${(await response.text()).slice(0, 300)}`);
+      const errorText = await readBodyCapped(response, MODEL_INFO_ERROR_BODY_MAX_BYTES).catch(() => '');
+      throw new Error(`models.dev API ${response.status}: ${errorText.slice(0, 300)}`);
     }
 
-    const sourceText = await response.text();
+    const sourceText = await readBodyCapped(response, MODEL_INFO_SOURCE_MAX_BYTES);
     const catalog = JSON.parse(sourceText);
     const index = buildModelInfoIndex(catalog, new TextEncoder().encode(sourceText).length, attemptedAt, sourceUrl);
+
+    // 空目录/骤降保护（阈值见 MODEL_INFO_DROP_GUARD_RATIO）：源返回 200 空壳或
+    // 模型数较上次成功目录跌去九成以上时，按失败处理走下方 catch——记录 failed
+    // 状态并保留旧索引，而不是把残缺目录写入覆盖全量模型能力。
+    const force = options.force === true;
+    const previousCount = Number(previousStatus?.indexedModelCount || 0);
+    if (index.indexedModelCount === 0
+      || (previousCount > 0 && !force && index.indexedModelCount < previousCount * MODEL_INFO_DROP_GUARD_RATIO)) {
+      const error = new Error(index.indexedModelCount === 0
+        ? '目录源返回空目录，已保留旧索引（确认换源无误后可强制同步覆盖）'
+        : `目录模型数从 ${previousCount} 骤降至 ${index.indexedModelCount}，已保留旧索引（确认换源无误后可强制同步覆盖）`);
+      error.statusCode = 502;
+      throw error;
+    }
+
     const status = {
       status: 'success',
       trigger,

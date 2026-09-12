@@ -160,7 +160,10 @@ function bindEvents() {
   setupAgentErrorsPage();
   setupIpBlocksPage();
   setupIpStatsActions();
-  state.syncModelInfoCacheButton.addEventListener('click', syncModelInfoCache);
+  // 箭头函数包裹：syncModelInfoCache(force) 会把首个参数当强制同步标志，
+  // 直接传函数引用会让 click 事件对象被误判为 force=true。
+  state.syncModelInfoCacheButton.addEventListener('click', () => syncModelInfoCache());
+  state.forceSyncModelInfoCacheButton.addEventListener('click', () => syncModelInfoCache(true));
   state.prevLatestPage.addEventListener('click', () => {
     appState.latestPage = Math.max(1, appState.latestPage - 1);
     void refreshActiveTab({ forceRefresh: true });

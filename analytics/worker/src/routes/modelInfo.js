@@ -1,4 +1,4 @@
-import { internalErrorMessage, json, methodNotAllowed, requireAdmin, unauthorized } from '../http.js';
+import { internalErrorMessage, json, methodNotAllowed, rejectOversizedBody, requireAdmin, unauthorized } from '../http.js';
 import {
   deleteModelInfoOverride,
   listAdminModelInfo,
@@ -80,7 +80,14 @@ export async function handleAdminModelInfoCache(request, env, url) {
   }
   if (request.method === 'POST') {
     try {
-      const result = await syncModelInfoCache(env, 'manual');
+      // 同步允许无请求体（dashboard「立即同步」为裸 POST），不能套用会拒绝
+      // Content-Length 缺失的 rejectOversizedBody；这里只拦截明显过大的 body。
+      const declaredLength = Number(request.headers.get('Content-Length') || 0);
+      if (declaredLength > 65536) {
+        return json({ code: 413, message: 'payload too large' }, { status: 413 });
+      }
+      const body = await request.json().catch(() => null);
+      const result = await syncModelInfoCache(env, 'manual', { force: body?.force === true });
       return json({ code: 0, status: result.status }, { headers: { 'Cache-Control': 'no-store' } });
     } catch (error) {
       console.error('[analytics] manual model info sync failed', error?.message || String(error));
@@ -98,6 +105,8 @@ export async function handleAdminModelInfoOverride(request, env, url) {
   }
 
   if (request.method === 'POST') {
+    const oversized = rejectOversizedBody(request, 65536);
+    if (oversized) return oversized;
     const body = await request.json().catch(() => null);
     const modelName = normalizeText(body?.modelName, 200);
     const context = parseNonNegativeInteger(body?.context);
@@ -126,17 +135,23 @@ export async function handleAdminModelInfoOverride(request, env, url) {
     const reasoningEfforts = [...new Set(body.reasoningEfforts
       .map((value) => normalizeText(value, 40))
       .filter(Boolean))];
-    const model = await saveModelInfoOverride(env, modelName, {
-      reasoningEfforts,
-      context,
-      output,
-      inputModalities,
-      outputModalities,
-      imageInputStatus,
-      temperatureStatus,
-      concurrencyLimit,
-      requestMode,
-    });
+    let model;
+    try {
+      model = await saveModelInfoOverride(env, modelName, {
+        reasoningEfforts,
+        context,
+        output,
+        inputModalities,
+        outputModalities,
+        imageInputStatus,
+        temperatureStatus,
+        concurrencyLimit,
+        requestMode,
+      });
+    } catch (error) {
+      console.error('[analytics] model info override save failed', error?.message || String(error));
+      return json({ code: 400, message: internalErrorMessage(error, 'model info save failed') }, { status: 400 });
+    }
     return json({ code: 0, modelName, model }, { headers: { 'Cache-Control': 'no-store' } });
   }
 
@@ -172,6 +187,8 @@ export async function handleAdminModelInfoSource(request, env) {
   }
 
   if (request.method === 'POST') {
+    const oversized = rejectOversizedBody(request, 65536);
+    if (oversized) return oversized;
     const body = await request.json().catch(() => null);
     const sourceUrl = normalizeText(body?.sourceUrl, 500);
     try {

@@ -175,6 +175,7 @@ export const state = {
   pluginsStatus: $('pluginsStatus'),
   pluginsTable: $('pluginsTable'),
   syncModelInfoCacheButton: $('syncModelInfoCacheButton'),
+  forceSyncModelInfoCacheButton: $('forceSyncModelInfoCacheButton'),
   modelInfoCacheState: $('modelInfoCacheState'),
   modelInfoCacheLastSuccess: $('modelInfoCacheLastSuccess'),
   modelInfoCacheProviders: $('modelInfoCacheProviders'),

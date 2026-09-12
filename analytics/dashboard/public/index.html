@@ -684,10 +684,11 @@
             <div class="section-head">
               <div>
                 <h2>模型信息缓存</h2>
-                <p>模型能力索引来自可配置的目录源（默认 models.dev，支持任意第三方或自部署的兼容目录），保存后点击“立即同步”生效。</p>
+                <p>模型能力索引来自可配置的目录源（默认 models.dev，支持任意第三方或自部署的兼容目录），保存后点击“立即同步”生效。目录源返回空目录或模型数骤降超过九成时同步会被拦截以保留旧索引，确认换源无误后点“强制同步”覆盖。</p>
               </div>
               <div class="section-actions">
                 <button id="syncModelInfoCacheButton" type="button">立即同步</button>
+                <button id="forceSyncModelInfoCacheButton" type="button" class="secondary-button">强制同步</button>
               </div>
             </div>
 

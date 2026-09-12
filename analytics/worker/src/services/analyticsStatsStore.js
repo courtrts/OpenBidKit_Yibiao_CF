@@ -29,6 +29,20 @@ const MAX_ANALYTICS_ROWS = 100000;
 // 实时客户端查询里 NOT IN 排除封禁客户端的 ID 上限：封禁清单来自管理员手动操作，
 // 正常量级是个位数到几十；超限时跳过排除并告警（窗口客户端数临时含封禁对象），避免无界 SQL。
 const MAX_BLOCKED_CLIENT_FILTER_IDS = 1000;
+// Agent runtime 基数治理：metric key 里的服务商/域名/模型是客户端任意文本，无鉴权
+// /track 可注入无界 distinct 组合（随机化三字段即可灌爆基数）。三个 2000 同一量级、
+// 同一口径：rollup 每项目每日只写按量前 2000 组合，D1 历史表每项目保留累计量前
+// 2000，历史查询 LIMIT 2000 是结构兜底。低量组合被剪后若再产生量会被加性 upsert
+// 重新带回，不构成永久漏计（实时页走 AE 全量，始终不受影响）。
+const MAX_AGENT_RUNTIME_UPSERT_ROWS_PER_DAY = 2000;
+const MAX_AGENT_RUNTIME_RETENTION_ROWS = 2000;
+const MAX_AGENT_RUNTIME_RETENTION_DELETE_PER_RUN = 5000;
+const MAX_AGENT_RUNTIME_HISTORY_ROWS = 2000;
+// 新客户端 cap 的 24h 窗口计数缓存（按项目，60s TTL）：cap 本身是 24h 粒度，
+// 60s 缓存不改变闸门语义，但避免脚本注册唯一 client_id 时逐事件 COUNT 耗 D1 读配额。
+const NEW_CLIENT_CAP_CHECK_TTL_MS = 60000;
+const NEW_CLIENT_CAP_CHECK_MAX_PROJECTS = 128;
+const newClientCapChecks = new Map();
 const RECENT_CLIENT_CREATED_MAX_AGE_DAYS = 1;
 const MAX_RECENT_CLIENT_WRITE_ATTEMPTS = 10000;
 const RECENT_CLIENT_WRITE_ATTEMPT_TTL_MS = 60000;
@@ -274,14 +288,25 @@ export async function recordTrackClient(env, event) {
   if (shouldInsert) {
     // D1 写预算闸门：单项目近 24 小时新客户端达上限（脚本批量注册唯一 client_id）
     // 时停止实时客户端落库；AE 事件点在上游已写、事件口径不削弱，仅客户端身份表停止增长。
-    const cutoff = formatBusinessDateTime(new Date(Date.now() - 86400000));
-    const countRow = await first(db, `
-      SELECT COUNT(*) AS count
-      FROM stats_clients
-      WHERE project_name = ? AND created_at >= ?
-    `, [event.projectName, cutoff]);
-    if (number(countRow?.count) >= TRACK_NEW_CLIENTS_CAP_PER_PROJECT_24H) {
-      console.warn(`[analytics] new-client cap (${TRACK_NEW_CLIENTS_CAP_PER_PROJECT_24H}/24h) hit for ${event.projectName}, realtime client insert skipped`);
+    const now = Date.now();
+    let capCheck = newClientCapChecks.get(event.projectName);
+    if (!capCheck || capCheck.expiresAt <= now) {
+      const cutoff = formatBusinessDateTime(new Date(now - 86400000));
+      const countRow = await first(db, `
+        SELECT COUNT(*) AS count
+        FROM stats_clients
+        WHERE project_name = ? AND created_at >= ?
+      `, [event.projectName, cutoff]);
+      capCheck = { count: number(countRow?.count), expiresAt: now + NEW_CLIENT_CAP_CHECK_TTL_MS, lastWarnAt: 0 };
+      if (newClientCapChecks.size >= NEW_CLIENT_CAP_CHECK_MAX_PROJECTS) newClientCapChecks.clear();
+      newClientCapChecks.set(event.projectName, capCheck);
+    }
+    if (capCheck.count >= TRACK_NEW_CLIENTS_CAP_PER_PROJECT_24H) {
+      // 告警同窗口节流：上限达成后每个新 client_id 事件都会走到这里，逐事件告警会刷爆日志。
+      if (now - capCheck.lastWarnAt >= NEW_CLIENT_CAP_CHECK_TTL_MS) {
+        capCheck.lastWarnAt = now;
+        console.warn(`[analytics] new-client cap (${TRACK_NEW_CLIENTS_CAP_PER_PROJECT_24H}/24h) hit for ${event.projectName}, realtime client insert skipped`);
+      }
       shouldInsertRow = false;
     }
   }
@@ -1262,9 +1287,19 @@ function sortAgentRuntimeModelRows(rows) {
 
 function createAgentRuntimeRowsFromMetricRows(rows = []) {
   const grouped = new Map();
+  let droppedUnknown = 0;
+  const droppedSamples = [];
   for (const row of rows || []) {
-    const parsed = parseAgentRuntimeMetricKey(row.metricKey ?? row.metric_key ?? row.status ?? row.blob9);
-    if (!parsed) continue;
+    const rawKey = row.metricKey ?? row.metric_key ?? row.status ?? row.blob9;
+    const parsed = parseAgentRuntimeMetricKey(rawKey);
+    if (!parsed) {
+      // 未识别的 metric key（未来 vN 协议升版/编码损坏）：不计入但采样告警一次。
+      // 实时页与夜间 rollup 都经本函数解析，不改这里协议升版会让两路同时无声归零，
+      // 运营无法区分"没有任务"与"格式不识别"。
+      droppedUnknown += 1;
+      if (droppedSamples.length < 3) droppedSamples.push(String(rawKey || '').slice(0, 120));
+      continue;
+    }
     const count = number(row.count ?? row.runCount ?? row.run_count);
     if (count <= 0) continue;
     const key = [parsed.runtime, parsed.provider, parsed.endpointHost, parsed.model].join('\0');
@@ -1280,6 +1315,9 @@ function createAgentRuntimeRowsFromMetricRows(rows = []) {
     addAgentRuntimeMetric(grouped.get(key), parsed, count);
   }
 
+  if (droppedUnknown > 0) {
+    console.warn(`[analytics] agent runtime: ${droppedUnknown} unrecognized metric key(s) dropped, samples=${droppedSamples.join(' / ') || '(empty)'}`);
+  }
   return sortAgentRuntimeModelRows(Array.from(grouped.values()).map((row) => ({
     runtime: row.runtime,
     provider: row.provider,
@@ -1351,39 +1389,69 @@ function createAgentRuntimeRowsByRuntime(models = []) {
     .sort((left, right) => number(right.totalCount) - number(left.totalCount) || left.runtime.localeCompare(right.runtime));
 }
 
-function createAgentRuntimeResponse(rows = []) {
+function createAgentRuntimeResponse(rows = [], extras = {}) {
   const models = sortAgentRuntimeModelRows(rows.map(normalizeAgentRuntimeModelRow));
   return {
-    ...createAgentRuntimeSummaryFromRows(models),
+    // 汇总可携带（历史分支用全表 SUM 聚合，表行截断不削弱汇总口径）；缺省自算。
+    ...(extras.summary || createAgentRuntimeSummaryFromRows(models)),
     runtimes: createAgentRuntimeRowsByRuntime(models),
     models,
+    truncated: Boolean(extras.truncated),
   };
 }
 
 export async function queryStatsAgentRuntime(env, projectName, range) {
   if (range === 'history') {
     const db = requireStatsDb(env);
-    const rows = await all(db, `
-      SELECT
-        runtime,
-        provider,
-        endpoint_host AS endpointHost,
-        model,
-        success_count AS successCount,
-        failed_count AS failedCount,
-        total_count AS totalCount,
-        retry_count AS resultRetryCount,
-        retried_run_count AS resultRetriedRunCount,
-        retry_success_count AS resultRetrySuccessCount,
-        model_run_count AS modelRunCount,
-        model_retry_count AS modelRetryCount,
-        model_retried_run_count AS modelRetriedRunCount,
-        model_retry_success_count AS modelRetrySuccessCount
-      FROM stats_agent_runtime
-      WHERE project_name = ?
-      ORDER BY total_count DESC, runtime ASC, provider ASC, endpoint_host ASC, model ASC
-    `, [projectName]);
-    return createAgentRuntimeResponse(rows);
+    // 汇总卡走独立 SUM 聚合（全表口径），模型表带 LIMIT 截断——两者分离保证
+    // 基数治理/截断只影响"明细行数"，不削弱汇总口径。COUNT 用于 truncated 信号。
+    const [totalRow, countRow, rows] = await Promise.all([
+      first(db, `
+        SELECT
+          SUM(success_count) AS successCount,
+          SUM(failed_count) AS failedCount,
+          SUM(total_count) AS totalCount,
+          SUM(retry_count) AS resultRetryCount,
+          SUM(retried_run_count) AS resultRetriedRunCount,
+          SUM(retry_success_count) AS resultRetrySuccessCount,
+          SUM(model_run_count) AS modelRunCount,
+          SUM(model_retry_count) AS modelRetryCount,
+          SUM(model_retried_run_count) AS modelRetriedRunCount,
+          SUM(model_retry_success_count) AS modelRetrySuccessCount
+        FROM stats_agent_runtime
+        WHERE project_name = ?
+      `, [projectName]),
+      first(db, `
+        SELECT COUNT(*) AS count
+        FROM stats_agent_runtime
+        WHERE project_name = ?
+      `, [projectName]),
+      all(db, `
+        SELECT
+          runtime,
+          provider,
+          endpoint_host AS endpointHost,
+          model,
+          success_count AS successCount,
+          failed_count AS failedCount,
+          total_count AS totalCount,
+          retry_count AS resultRetryCount,
+          retried_run_count AS resultRetriedRunCount,
+          retry_success_count AS resultRetrySuccessCount,
+          model_run_count AS modelRunCount,
+          model_retry_count AS modelRetryCount,
+          model_retried_run_count AS modelRetriedRunCount,
+          model_retry_success_count AS modelRetrySuccessCount
+        FROM stats_agent_runtime
+        WHERE project_name = ?
+        ORDER BY total_count DESC, runtime ASC, provider ASC, endpoint_host ASC, model ASC
+        LIMIT ${MAX_AGENT_RUNTIME_HISTORY_ROWS}
+      `, [projectName]),
+    ]);
+    return createAgentRuntimeResponse(rows, {
+      summary: createAgentRuntimeSummaryFromRows([totalRow || {}]),
+      truncated: number(countRow?.count) > rows.length,
+    });
   }
 
   const project = sqlString(projectName);
@@ -1400,7 +1468,14 @@ export async function queryStatsAgentRuntime(env, projectName, range) {
     ORDER BY count DESC, metricKey ASC
     LIMIT ${MAX_ANALYTICS_ROWS}
   `);
-  return createAgentRuntimeResponse(createAgentRuntimeRowsFromMetricRows(result.data || []));
+  const data = result.data || [];
+  if (data.length >= MAX_ANALYTICS_ROWS) {
+    // AE 分组结果触顶：按量排序后截断丢掉的是低频组合，但触顶本身说明基数异常，必须留信号。
+    console.warn(`[analytics] agent runtime realtime AE rows hit LIMIT ${MAX_ANALYTICS_ROWS} for ${projectName}/${range}; low-volume metric keys truncated`);
+  }
+  return createAgentRuntimeResponse(createAgentRuntimeRowsFromMetricRows(data), {
+    truncated: data.length >= MAX_ANALYTICS_ROWS,
+  });
 }
 
 export async function queryStatsProjects(env) {
@@ -2408,6 +2483,7 @@ async function runModelsStage(env, activityDate, projectNames, completedByProjec
 }
 
 async function queryRollupAgentRuntimeRows(env, activityDate, projectNames) {
+  // 按量排序后再 LIMIT：触顶时丢的是低频组合（可解释口径），而不是 key 序前缀的随机截断。
   const result = await queryAnalytics(env, `
     SELECT
       blob1 AS projectName,
@@ -2419,18 +2495,27 @@ async function queryRollupAgentRuntimeRows(env, activityDate, projectNames) {
       AND blob9 != ''
       AND ${businessDateCondition(activityDate)}
     GROUP BY projectName, metricKey
-    ORDER BY projectName ASC, metricKey ASC
+    ORDER BY runCount DESC, projectName ASC, metricKey ASC
     LIMIT ${MAX_ANALYTICS_ROWS}
   `);
+  const data = result.data || [];
+  if (data.length >= MAX_ANALYTICS_ROWS) {
+    console.warn(`[analytics] agent runtime rollup AE rows hit LIMIT ${MAX_ANALYTICS_ROWS} for ${activityDate}; low-volume metric keys not rolled up`);
+  }
   const grouped = new Map();
-  for (const row of result.data || []) {
+  for (const row of data) {
     const projectName = normalizeProjectName(row.projectName);
     if (!projectName) continue;
     if (!grouped.has(projectName)) grouped.set(projectName, []);
     grouped.get(projectName).push({ metricKey: row.metricKey, count: row.runCount });
   }
   return Array.from(grouped.entries()).flatMap(([projectName, rows]) => (
-    createAgentRuntimeRowsFromMetricRows(rows).map((summary) => ({ projectName, ...summary }))
+    // 每项目每日只写按量前 N 组合（createAgentRuntimeRowsFromMetricRows 已按量降序）：
+    // 无鉴权 /track 灌入的高基数攻击日不能吃掉账户级 D1 写配额；低量行本就会被
+    // 保留策略剪掉，再产生量时由加性 upsert 带回，不构成永久漏计。
+    createAgentRuntimeRowsFromMetricRows(rows)
+      .slice(0, MAX_AGENT_RUNTIME_UPSERT_ROWS_PER_DAY)
+      .map((summary) => ({ projectName, ...summary }))
   )).filter((row) => row.projectName && row.totalCount > 0);
 }
 
@@ -2486,12 +2571,51 @@ function prepareAgentRuntimeStatements(db, rows, updatedAt) {
   `).bind(json, updatedAt)];
 }
 
+// 基数治理：客户端构造的 provider/域名/模型是任意文本，无鉴权 /track 可注入无界
+// distinct 组合。按累计量保留每项目 top-N，批量删除超出的低量行（单跑有界）。
+// 删除幂等；被剪的低量行日后产生量会经 ON CONFLICT 加性 upsert 重新带回，无永久漏计。
+// 治理失败只影响表大小不影响统计正确性（实时页走 AE 全量），独立 try/catch 不
+// 扰动 agents 阶段的成败标记。
+async function pruneAgentRuntimeCardinality(db, projectName) {
+  try {
+    const countRow = await first(db, `
+      SELECT COUNT(*) AS count
+      FROM stats_agent_runtime
+      WHERE project_name = ?
+    `, [projectName]);
+    const overflow = number(countRow?.count) - MAX_AGENT_RUNTIME_RETENTION_ROWS;
+    if (overflow <= 0) return;
+    const deleteLimit = Math.min(overflow, MAX_AGENT_RUNTIME_RETENTION_DELETE_PER_RUN);
+    const result = await run(db, `
+      DELETE FROM stats_agent_runtime
+      WHERE project_name = ?
+        AND rowid IN (
+          SELECT rowid
+          FROM stats_agent_runtime
+          WHERE project_name = ?
+          ORDER BY total_count ASC, rowid ASC
+          LIMIT ?
+        )
+    `, [projectName, projectName, deleteLimit]);
+    if (result?.meta?.changes) {
+      console.warn(`[analytics] agent runtime cardinality prune: ${projectName} dropped ${result.meta.changes} low-count row(s) (retains top ${MAX_AGENT_RUNTIME_RETENTION_ROWS})`);
+    }
+  } catch (error) {
+    console.warn(`[analytics] agent runtime cardinality prune failed for ${projectName}`, error?.message || String(error));
+  }
+}
+
 async function runAgentRuntimeStage(env, activityDate, projectNames, completedByProject) {
   const db = requireStatsDb(env);
   const grouped = groupRowsByProject(await queryRollupAgentRuntimeRows(env, activityDate, projectNames), projectNames);
   const results = [];
   for (const projectName of uniqueProjectNames(projectNames)) {
     results.push(await executeProjectStageChunks(db, completedByProject, projectName, activityDate, 'agents', grouped.get(projectName) || [], prepareAgentRuntimeStatements));
+  }
+  for (const result of results) {
+    if (!result.skipped) {
+      await pruneAgentRuntimeCardinality(db, result.projectName);
+    }
   }
   return results;
 }

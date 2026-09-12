@@ -561,6 +561,13 @@ button:disabled {
   font-size: 15px;
 }
 
+.agent-runtime-note {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+  margin-top: 8px;
+}
+
 .agent-runtime-models {
   margin-top: 14px;
 }

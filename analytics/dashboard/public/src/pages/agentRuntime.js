@@ -2,10 +2,19 @@ import { assertReady, buildRangeQuery, getEncodedProjectAndDays, loadProjectOpti
 import { escapeHtml, formatNumber, formatPercent } from '../render.js';
 import { state } from '../state.js';
 
-function renderModelRows(models = []) {
+// 明细表渲染上限：服务端历史查询已 LIMIT（基数治理口径），此处再截断只防极端
+// 数据量下浏览器无界 DOM 卡死；汇总卡不受影响（服务端独立聚合）。
+const MAX_RENDERED_MODEL_ROWS = 500;
+
+function renderModelRows(models = [], truncated = false) {
   if (!models.length) {
     return '<div class="empty">暂无模型维度数据</div>';
   }
+
+  const visible = models.slice(0, MAX_RENDERED_MODEL_ROWS);
+  const moreNote = models.length > visible.length
+    ? `<div class="agent-runtime-note">仅显示前 ${visible.length} 行（共 ${models.length} 行${truncated ? '，且数据源已按量截断' : ''}）</div>`
+    : (truncated ? '<div class="agent-runtime-note">数据源已按量截断，低频组合未包含在内</div>' : '');
 
   return `
     <table>
@@ -26,7 +35,7 @@ function renderModelRows(models = []) {
           <th>模型重试成功率</th>
         </tr>
       </thead>
-      <tbody>${models.map((row) => `
+      <tbody>${visible.map((row) => `
         <tr>
           <td><code>${escapeHtml(row.runtime || '-')}</code></td>
           <td><code>${escapeHtml(row.provider || '-')}</code></td>
@@ -44,6 +53,7 @@ function renderModelRows(models = []) {
         </tr>
       `).join('')}</tbody>
     </table>
+    ${moreNote}
   `;
 }
 
@@ -100,6 +110,7 @@ function renderAgentRuntime(stats = {}) {
   const modelRunCount = Number(stats.modelRunCount || 0);
   const runtimes = Array.isArray(stats.runtimes) ? stats.runtimes : [];
   const models = Array.isArray(stats.models) ? stats.models : [];
+  const truncated = Boolean(stats.truncated);
 
   state.agentRuntime.innerHTML = `
     <div class="agent-runtime-layout">
@@ -120,6 +131,7 @@ function renderAgentRuntime(stats = {}) {
           <div><small>模型重试率</small><b>${formatPercent(retryRate)}</b></div>
           <div><small>模型重试成功率</small><b>${formatPercent(retrySuccessRate)}</b></div>
         </div>
+        <div class="agent-runtime-note">口径：成功率 = 成功/(成功+失败)；用户取消、断连与队列暂停不计入分母，任务卡死超时计为失败</div>
       </div>
       <div class="agent-runtime-breakdown panel">
         <h3>运行时维度</h3>
@@ -127,7 +139,7 @@ function renderAgentRuntime(stats = {}) {
       </div>
     </div>
   `;
-  state.agentRuntimeModels.innerHTML = renderModelRows(models);
+  state.agentRuntimeModels.innerHTML = renderModelRows(models, truncated);
 }
 
 export async function loadAgentRuntime() {

@@ -10,6 +10,7 @@ const {
   HTML_MAX_DESIGN_HEIGHT,
   getLocalImageRenderService,
 } = require('./localImageRenderService.cjs');
+const fs = require('node:fs');
 
 const HTML_AGENT_THRESHOLD_CHARS = 50000;
 const MERMAID_REPAIR_ATTEMPTS = 3;
@@ -259,6 +260,14 @@ async function generateAiIllustration(aiService, execution) {
     style: execution.planItem.image_type,
   });
   if (!generated?.asset_url) throw new Error('生图模型未返回本地图片地址');
+  // 与 Mermaid/HTML 截图同一完整性口径：生图响应截断时会落盘"半张 PNG"
+  //（文件头魔数完好但缺 IEND 尾块），入库后正文里是裂图
+  if (generated.file_path) {
+    const mimeType = String(generated.mime_type || '').toLowerCase();
+    if (mimeType === 'image/png' || /\.png$/i.test(generated.file_path)) {
+      assertCompletePng(fs.readFileSync(generated.file_path), 'AI生图结果不完整');
+    }
+  }
   return { asset_url: generated.asset_url, attempts: 1 };
 }
 

@@ -1599,7 +1599,18 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
       if (!technicalPlan.outlineWordControlSnapshot) {
         throw new Error('当前目录没有字数控制生效快照，请重新生成目录');
       }
-      return startManagedTask('content-generation', payload, runContentGenerationTask);
+      // 暂停恢复沿用原任务行：task_id/日志历史/进度连续，界面上任务不"断片"。
+      // 原队列作用域在暂停时被 pauseQueueScope 冻结，恢复前必须先解冻，
+      // 否则 runner 内所有 AI 请求都会以 AI_QUEUE_SCOPE_PAUSED 被拒。
+      const resumeTask = payload?.resume && technicalPlan.contentGenerationTask?.status === 'paused'
+        ? technicalPlan.contentGenerationTask
+        : undefined;
+      if (resumeTask && aiService?.resumeQueueScope) {
+        aiService.resumeQueueScope(`content-generation:${resumeTask.task_id}`);
+      }
+      return startManagedTask('content-generation', payload, runContentGenerationTask, undefined, resumeTask
+        ? { existingTask: resumeTask, skipInitialStateUpdate: true }
+        : undefined);
     },
     pauseContentGeneration() {
       const task = activeTasks.get('content-generation');

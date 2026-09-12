@@ -29,9 +29,12 @@ interface ContentEditPageProps {
   sections: ContentGenerationSections;
   onContentGenerationOptionsChange: (options: ContentGenerationOptions) => Promise<void> | void;
   onContentSaved: (item: OutlineItem, content: string) => Promise<void> | void;
+  onCancel: (taskType: string) => Promise<void>;
 }
 
-type TreeStatus = ContentGenerationSectionStatus | 'partial' | 'planning' | 'pending';
+// paused 仅存在于展示层：任务暂停/暂停中时把 running 小节映射为已暂停，
+// 持久化的小节状态本身不会写 paused（暂停回退到开工前状态）
+type TreeStatus = ContentGenerationSectionStatus | 'partial' | 'planning' | 'pending' | 'paused';
 
 interface OutlineNodeMeta {
   status: TreeStatus;
@@ -50,6 +53,7 @@ const statusLabels: Record<TreeStatus, string> = {
   partial: '部分生成',
   planning: '编排中',
   pending: '待处理',
+  paused: '已暂停',
 };
 
 const pendingModeDescriptions: Record<Exclude<OutlineContentMode, 'ai-generate'>, string> = {
@@ -238,10 +242,13 @@ function getTreeStatus(item: OutlineItem, sections: ContentGenerationSections): 
   if (childStatuses.every((status) => status === 'pending')) {
     return 'pending';
   }
+  if (childStatuses.every((status) => status === 'paused')) {
+    return 'paused';
+  }
   if (childStatuses.some((status) => status === 'error')) {
     return 'error';
   }
-  if (childStatuses.some((status) => status === 'success' || status === 'ignored' || status === 'partial' || status === 'pending')) {
+  if (childStatuses.some((status) => status === 'success' || status === 'ignored' || status === 'partial' || status === 'pending' || status === 'paused')) {
     return 'partial';
   }
 
@@ -253,8 +260,9 @@ function getParentStatus(childStatuses: TreeStatus[]): TreeStatus {
   if (childStatuses.every((status) => status === 'success')) return 'success';
   if (childStatuses.every((status) => status === 'ignored')) return 'ignored';
   if (childStatuses.every((status) => status === 'pending')) return 'pending';
+  if (childStatuses.every((status) => status === 'paused')) return 'paused';
   if (childStatuses.some((status) => status === 'error')) return 'error';
-  if (childStatuses.some((status) => status === 'success' || status === 'ignored' || status === 'partial' || status === 'pending')) return 'partial';
+  if (childStatuses.some((status) => status === 'success' || status === 'ignored' || status === 'partial' || status === 'pending' || status === 'paused')) return 'partial';
   if (childStatuses.some((status) => status === 'planning')) return 'planning';
   return 'idle';
 }
@@ -281,13 +289,16 @@ function countWordsCached(content: string): number {
   return words;
 }
 
-function buildOutlineMeta(items: OutlineItem[], sections: ContentGenerationSections, planning: boolean) {
+function buildOutlineMeta(items: OutlineItem[], sections: ContentGenerationSections, planning: boolean, taskPaused: boolean) {
   const meta = new Map<string, OutlineNodeMeta>();
 
   function visit(item: OutlineItem): OutlineNodeMeta {
     if (!item.children?.length) {
       const baseStatus = getLeafStatus(item, sections);
-      const status: TreeStatus = planning && item.content_mode === 'ai-generate' && baseStatus === 'idle' ? 'planning' : baseStatus;
+      // 暂停（含暂停中）时生成中的小节按已暂停展示，避免徽章一直停在"生成中"
+      const status: TreeStatus = taskPaused && baseStatus === 'running'
+        ? 'paused'
+        : planning && item.content_mode === 'ai-generate' && baseStatus === 'idle' ? 'planning' : baseStatus;
       const nodeMeta: OutlineNodeMeta = { status, leafCount: 1, words: countWordsCached(getLeafContent(item, sections)) };
       meta.set(item.id, nodeMeta);
       return nodeMeta;
@@ -331,6 +342,7 @@ function ContentEditPage({
   sections,
   onContentGenerationOptionsChange,
   onContentSaved,
+  onCancel,
 }: ContentEditPageProps) {
   const { showToast } = useToast();
   const isExpansionWorkflow = workflowKind === 'existing-plan-expansion';
@@ -361,6 +373,7 @@ function ContentEditPage({
   const [htmlImageTypesDraft, setHtmlImageTypesDraft] = useState(DEFAULT_HTML_IMAGE_TYPES);
   const [previewImage, setPreviewImage] = useState<{ src: string; alt: string } | null>(null);
   const [pausePending, setPausePending] = useState(false);
+  const [cancellingContentTask, setCancellingContentTask] = useState(false);
   const [exportFormat, setExportFormat] = useState<ExportFormatConfig>(DEFAULT_EXPORT_FORMAT);
   const [developerMode, setDeveloperMode] = useState(false);
   const firstLeafId = allLeaves[0]?.id || '';
@@ -375,6 +388,7 @@ function ContentEditPage({
   const taskInFlight = running || pausing;
   const phaseVisible = taskInFlight || paused || taskFailed;
   const taskBlocksGeneration = taskInFlight || paused;
+  const taskPaused = pausing || paused;
   const contentStats = task?.stats?.content;
   const progressDetail = task?.progress_detail;
   const illustrationStats = useMemo(() => {
@@ -407,7 +421,7 @@ function ContentEditPage({
   const contentCorrecting = originalAuditing || auditing || tableCleaning;
   const illustrationPlanning = phaseVisible && contentStats?.phase === 'illustration-planning';
   const illustrationGenerating = phaseVisible && contentStats?.phase === 'illustration-generating';
-  const outlineMeta = useMemo(() => outlineData?.outline ? buildOutlineMeta(outlineData.outline, sections, planning) : new Map<string, OutlineNodeMeta>(), [outlineData, planning, sections]);
+  const outlineMeta = useMemo(() => outlineData?.outline ? buildOutlineMeta(outlineData.outline, sections, planning, taskPaused) : new Map<string, OutlineNodeMeta>(), [outlineData, planning, sections, taskPaused]);
   const contentSummary = useMemo(() => leaves.reduce((summary, item) => {
     const status = getLeafStatus(item, sections);
     return {
@@ -865,6 +879,19 @@ function ContentEditPage({
     void openGenerationDialog();
   };
 
+  const handleCancelContentTask = async () => {
+    if (!onCancel || cancellingContentTask || task?.status !== 'running') return;
+    setCancellingContentTask(true);
+    try {
+      await onCancel('content-generation');
+      showToast('已发送取消请求，正在停止正文生成…', 'info');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '取消任务失败，请重试', 'error');
+    } finally {
+      setCancellingContentTask(false);
+    }
+  };
+
   const launchContentGeneration = async ({
     savedGenerationOptions,
     nextImageModelAvailable,
@@ -1230,6 +1257,17 @@ function ContentEditPage({
               <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.05.05a2 2 0 0 1-2.83 2.83l-.05-.05a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.04 1.56V21a2 2 0 0 1-4 0v-.08a1.7 1.7 0 0 0-1.04-1.56 1.7 1.7 0 0 0-1.87.34l-.05.05a2 2 0 0 1-2.83-2.83l.05-.05A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.04H3a2 2 0 0 1 0-4h.08A1.7 1.7 0 0 0 4.6 8.93a1.7 1.7 0 0 0-.34-1.87l-.05-.05a2 2 0 0 1 2.83-2.83l.05.05a1.7 1.7 0 0 0 1.87.34A1.7 1.7 0 0 0 10 3.01V3a2 2 0 0 1 4 0v.08a1.7 1.7 0 0 0 1.04 1.56 1.7 1.7 0 0 0 1.87-.34l.05-.05a2 2 0 0 1 2.83 2.83l-.05.05a1.7 1.7 0 0 0-.34 1.87 1.7 1.7 0 0 0 1.56 1.04H21a2 2 0 0 1 0 4h-.08A1.7 1.7 0 0 0 19.4 15Z" />
             </svg>
           </button>
+          {task?.status === 'running' && (
+            <button
+              type="button"
+              className="outline-cancel-action"
+              onClick={() => void handleCancelContentTask()}
+              disabled={cancellingContentTask}
+              aria-label="取消正文生成任务"
+            >
+              {cancellingContentTask ? '取消中…' : '取消生成'}
+            </button>
+          )}
           {awaitingContentDecision ? (
             <>
               {unresolvedCount > 0 && (

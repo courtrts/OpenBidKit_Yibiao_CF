@@ -19,6 +19,7 @@ const {
 const { applyRangeEdits, findTextMatches } = require('../utils/textEdit.cjs');
 const { splitUserTextByContextLimit } = require('../utils/userTextSplitter.cjs');
 const { countReadableWords } = require('../utils/wordCount.cjs');
+const { userFacingTaskError } = require('../utils/taskErrorText.cjs');
 
 const DEFAULT_CONTEXT_LENGTH_LIMIT = 400000;
 const AGENT_CONTEXT_THRESHOLD_RATIO = 0.7;
@@ -2128,7 +2129,7 @@ function loadContentKnowledgeReferences(knowledgeBaseService, documentIds, log) 
     if (contentMap.size) log(`正文生成可用知识库正文素材 ${contentMap.size} 条。`);
     return { items, contentMap };
   } catch (error) {
-    log(`读取正文编排参考知识库失败，已跳过：${error.message || String(error)}`);
+    log(`读取正文编排参考知识库失败，已跳过：${userFacingTaskError(error, '知识库读取失败')}`);
     return { items: [], contentMap: new Map() };
   }
 }
@@ -2165,16 +2166,6 @@ function updateOutlineItemContent(items, targetId, content) {
     }
 
     return { ...item, children: updateOutlineItemContent(children, targetId, content) };
-  });
-}
-
-function clearOutlineContent(items) {
-  return (items || []).map((item) => {
-    const { content, children, ...rest } = item;
-    const normalizedChildren = normalizeChildren(item);
-    return normalizedChildren.length
-      ? { ...rest, children: clearOutlineContent(normalizedChildren) }
-      : rest;
   });
 }
 
@@ -2655,7 +2646,10 @@ async function runItemsWithWorkerPool(items, limit, worker, shouldStop) {
   });
 }
 
-function createInitialSections(leaves, existingSections) {
+// freshStatus=true 用于全量重生成：目录里的旧正文不预先清空（清掉后重生成一旦失败
+// 就没有可回退的底本），而是作为回退底本保留在小节 content 里；状态一律置 idle、
+// 清掉旧错误，让进度从 0 起算，tasksToRun 依靠 regenerate 标志强制覆盖生成。
+function createInitialSections(leaves, existingSections, { freshStatus = false } = {}) {
   const next = { ...(existingSections || {}) };
   const leafIds = new Set(leaves.map(({ item }) => item.id));
 
@@ -2675,9 +2669,9 @@ function createInitialSections(leaves, existingSections) {
     next[item.id] = {
       id: item.id,
       title: item.title || '未命名章节',
-      status: existingStatus || (content.trim() ? 'success' : 'idle'),
+      status: freshStatus ? 'idle' : existingStatus || (content.trim() ? 'success' : 'idle'),
       content,
-      error: interrupted ? INTERRUPTED_SECTION_ERROR : existing?.error,
+      error: freshStatus ? undefined : interrupted ? INTERRUPTED_SECTION_ERROR : existing?.error,
       updated_at: existing?.updated_at,
     };
   }
@@ -2874,7 +2868,10 @@ function buildContentPhaseProgress(contentStats, latestLog = '', progressMode = 
 
 // 按当前任务模式把阶段内进度映射为单调递增的 Step05 累计进度。
 function buildContentOverallProgress(progressMode, detail, status) {
-  if (status === 'success' || detail.phase === 'done') return 100;
+  if (status === 'success') return 100;
+  // 阶段走完但任务带错收尾时封顶 99：100% 在界面上等价于"已完成"，
+  // 会把仍有失败小节的任务误导成成功
+  if (detail.phase === 'done') return status === 'error' ? 99 : 100;
   const profile = CONTENT_PROGRESS_PROFILES[progressMode] || CONTENT_PROGRESS_PROFILES.full;
   const range = profile[detail.phase];
   if (!range) return 0;
@@ -2979,8 +2976,8 @@ async function runContentGenerationTask({ aiService, agentService, workspaceStor
   }
   const fullRegenerate = regenerate && !targetItemId;
   if (fullRegenerate) {
+    // 旧正文不再预先清空：保留为回退底本，重生成失败时按小节回退，避免一次失败清空全文。
     workspaceStore.clearMermaidCache?.();
-    outlineData = { ...outlineData, outline: clearOutlineContent(outlineData.outline) };
   }
 
   let leaves = collectLeafContexts(outlineData.outline)
@@ -3085,7 +3082,7 @@ async function runContentGenerationTask({ aiService, agentService, workspaceStor
   let knowledgeItems = [];
   let allowedKnowledgeItemIds = new Set();
   let knowledgeContentMap = new Map();
-  let sections = createInitialSections(leaves, fullRegenerate ? {} : storedPlan.contentGenerationSections);
+  let sections = createInitialSections(leaves, fullRegenerate ? {} : storedPlan.contentGenerationSections, { freshStatus: fullRegenerate });
   const touchedItemIds = new Set(contentRuntime.touched_item_ids);
   let tasksToRun = leaves.filter(({ item }) => {
     const section = sections[item.id];
@@ -3180,11 +3177,16 @@ async function runContentGenerationTask({ aiService, agentService, workspaceStor
   }
 
   refreshRunLimits(tasksToRun);
-  let logs = [retryContentCorrection
-    ? `准备重试内容矫正，共 ${leaves.length} 个已生成小节。`
-    : resume
-      ? `继续已暂停的正文生成任务，共 ${leaves.length} 个小节。`
-      : `准备生成正文，共 ${leaves.length} 个小节。`];
+  // 恢复任务沿用同一任务行的日志历史（checkpoint 会以本数组整体替换任务行日志，
+  // 不合并就会让暂停前的进度记录从界面上消失）
+  let logs = [
+    ...(resume ? (storedPlan.contentGenerationTask?.logs || []) : []),
+    retryContentCorrection
+      ? `准备重试内容矫正，共 ${leaves.length} 个已生成小节。`
+      : resume
+        ? `继续已暂停的正文生成任务，共 ${leaves.length} 个小节。`
+        : `准备生成正文，共 ${leaves.length} 个小节。`,
+  ];
   if (targetItemId) {
     logs = [`准备重新生成正文小节：${targetItemId}。`];
   } else if (retryFailedSections) {
@@ -3227,7 +3229,9 @@ async function runContentGenerationTask({ aiService, agentService, workspaceStor
           : targetItemId
             ? 'single'
             : 'full';
-  let lastTaskProgress = resume ? Math.max(0, Number(storedPlan.contentGenerationTask?.progress) || 0) : 0;
+  // 恢复进度封顶 99：暂停前若已显示 100，恢复运行后继续跑还会再推进度条，
+  // 100→100 的视觉冻结会让用户以为任务没有继续
+  let lastTaskProgress = resume ? Math.min(99, Math.max(0, Number(storedPlan.contentGenerationTask?.progress) || 0)) : 0;
 
   // 所有正文任务更新都在这里补充累计进度和当前阶段明细。
   function buildTaskUpdate(partial = {}) {
@@ -3925,7 +3929,7 @@ async function runContentGenerationTask({ aiService, agentService, workspaceStor
         throw error;
       }
       contentPlan = normalizeContentPlan({}, allowedKnowledgeItemIds, allowedFactTitles);
-      logs = [...logs, `编排失败：${item.id} ${item.title || '未命名章节'}，${error.message || '模型返回无效'}，将按纯正文生成。`];
+      logs = [...logs, `编排失败：${item.id} ${item.title || '未命名章节'}，${userFacingTaskError(error, '模型返回无效')}，将按纯正文生成。`];
     }
 
     if (tableRequirement === 'none') {
@@ -4309,7 +4313,7 @@ async function runContentGenerationTask({ aiService, agentService, workspaceStor
         }, previousContent, { logs });
         throw error;
       }
-      const message = error.message || '正文生成失败';
+      const message = userFacingTaskError(error, '正文生成失败');
       const fallbackContent = isSingleSectionRegeneration
         ? previousContent
         : countContentWords(content) > 0
@@ -4502,7 +4506,7 @@ async function runContentGenerationTask({ aiService, agentService, workspaceStor
         });
       } catch (error) {
         if (isPauseLikeError(error)) throw error;
-        logs = [...logs, `小节字数第 ${rounds} 轮调整未应用：${item.id}，${error.message || String(error)}。`];
+        logs = [...logs, `小节字数第 ${rounds} 轮调整未应用：${item.id}，${userFacingTaskError(error, '字数调整失败')}。`];
       }
       itemRounds[item.id] = rounds;
       setWordAdjustmentRuntime(stage, item.id, rounds, completedItemIds, itemRounds);
@@ -4756,7 +4760,7 @@ async function runContentGenerationTask({ aiService, agentService, workspaceStor
           } catch (error) {
             if (isPauseLikeError(error)) throw error;
             failed = true;
-            logs = [...logs, `全文字数调整未应用：${candidate.item.id}，${error.message || String(error)}。`];
+            logs = [...logs, `全文字数调整未应用：${candidate.item.id}，${userFacingTaskError(error, '字数调整失败')}。`];
           }
           completedItemIds.push(candidate.item.id);
           completedItemIdSet.add(candidate.item.id);
@@ -4956,7 +4960,7 @@ workspace 文件说明：
         if (isPauseLikeError(error)) {
           throw error;
         }
-        failures = [error.message || '模型返回无效'];
+        failures = [userFacingTaskError(error, '模型返回无效')];
         writeDeveloperLog('original_coverage.repair.attempt.error', {
           section_id: item.id,
           title: item.title || '未命名章节',
@@ -5132,7 +5136,7 @@ workspace 文件说明：
 
       const failedCount = sectionIndex.size;
       contentStats.audit_agent_failed_sections = failedCount;
-      logs = [...logs, `原方案覆盖 Agent 修复失败：${error.message || '未知错误'}。已保留原正文，${failedCount} 个小节需人工核对，任务将继续进入后续流程。`];
+      logs = [...logs, `原方案覆盖 Agent 修复失败：${userFacingTaskError(error, '未知错误')}。已保留原正文，${failedCount} 个小节需人工核对，任务将继续进入后续流程。`];
       writeDeveloperLog('original_coverage.agent.failed', {
         failed_count: failedCount,
         ...agentErrorDiagnostics(error),
@@ -5238,7 +5242,7 @@ workspace 文件说明：
         if (isPauseLikeError(error)) {
           throw error;
         }
-        logs = [...logs, `原方案覆盖审计失败：${target.item.id} ${target.item.title || '未命名章节'}，${error.message || '模型返回无效'}，已跳过该小节。`];
+        logs = [...logs, `原方案覆盖审计失败：${target.item.id} ${target.item.title || '未命名章节'}，${userFacingTaskError(error, '模型返回无效')}，已跳过该小节。`];
         writeDeveloperLog('original_coverage.audit.section.error', {
           section_id: target.item.id,
           title: target.item.title || '未命名章节',
@@ -5315,7 +5319,7 @@ workspace 文件说明：
           throw error;
         }
         contentStats.audit_fix_failed += 1;
-        logs = [...logs, `原方案覆盖修复失败：${item.id} ${item.title || '未命名章节'}，${error.message || '模型返回无效'}。`];
+        logs = [...logs, `原方案覆盖修复失败：${item.id} ${item.title || '未命名章节'}，${userFacingTaskError(error, '模型返回无效')}。`];
       } finally {
         contentStats.audit_fix_completed += 1;
         publishTaskUpdate({ status: 'running', progress: progressFor(leaves, sections), logs, stats: statsSnapshot() });
@@ -5683,7 +5687,7 @@ workspace 文件说明：
       }
       const failedCount = normalizedTargetId ? 1 : sectionIndex.size;
       contentStats.audit_agent_failed_sections = failedCount;
-      logs = [...logs, `Agent 一致性修复失败：${error.message || '未知错误'}。已保留原正文，未回退普通修复。`];
+      logs = [...logs, `Agent 一致性修复失败：${userFacingTaskError(error, '未知错误')}。已保留原正文，未回退普通修复。`];
       writeDeveloperLog('consistency.agent.failed', {
         target_item_id: normalizedTargetId,
         failed_count: failedCount,
@@ -5803,7 +5807,7 @@ workspace 文件说明：
         if (isPauseLikeError(error)) {
           throw error;
         }
-        failures = [error.message || '模型返回无效'];
+        failures = [userFacingTaskError(error, '模型返回无效')];
         writeDeveloperLog('consistency.repair.attempt.error', {
           section_id: item.id,
           title: item.title || '未命名章节',
@@ -5925,7 +5929,7 @@ workspace 文件说明：
         if (isPauseLikeError(error)) {
           throw error;
         }
-        logs = [...logs, `一致性审计失败：第 ${group.index}/${group.total} 组，${error.message || '模型返回无效'}，已跳过该组。`];
+        logs = [...logs, `一致性审计失败：第 ${group.index}/${group.total} 组，${userFacingTaskError(error, '模型返回无效')}，已跳过该组。`];
         writeDeveloperLog('consistency.audit.group.error', {
           index: group.index,
           total: group.total,
@@ -6003,7 +6007,7 @@ workspace 文件说明：
           throw error;
         }
         contentStats.audit_fix_failed += 1;
-        logs = [...logs, `一致性修复失败：${item.id} ${item.title || '未命名章节'}，${error.message || '模型返回无效'}。`];
+        logs = [...logs, `一致性修复失败：${item.id} ${item.title || '未命名章节'}，${userFacingTaskError(error, '模型返回无效')}。`];
       } finally {
         contentStats.audit_fix_completed += 1;
         publishTaskUpdate({ status: 'running', progress: progressFor(leaves, sections), logs, stats: statsSnapshot() });
@@ -6152,7 +6156,7 @@ workspace 文件说明：
         }
         skippedCount += batch.length;
         contentStats.table_cleanup_completed += batch.length;
-        logs = [...logs, `正文去表格跳过：${item.id} ${item.title || '未命名章节'}，${error.message || '模型返回无效'}。`];
+        logs = [...logs, `正文去表格跳过：${item.id} ${item.title || '未命名章节'}，${userFacingTaskError(error, '模型返回无效')}。`];
         writeDeveloperLog('table_cleanup.batch.error', {
           section_id: item.id,
           title: item.title || '未命名章节',
@@ -6462,7 +6466,7 @@ workspace 文件说明：
           error: compactError(error?.message || error),
         });
         const kindLabel = planItem.kind === 'ai' ? 'AI' : planItem.kind === 'mermaid' ? 'Mermaid' : 'HTML';
-        logs = [...logs, `${kindLabel} 配图失败：${planItem.section_ids[0]}，${error.message || '生成失败'}，已保留正文。`];
+        logs = [...logs, `${kindLabel} 配图失败：${planItem.section_ids[0]}，${userFacingTaskError(error, '生成失败')}，已保留正文。`];
       }
     }
 
@@ -6759,4 +6763,10 @@ const __developerContentExpansionPatchRuntime = {
   applyContentExpansionPatch,
 };
 
-module.exports = { runContentGenerationTask, stripRepeatedChapterTitle, __developerContentExpansionPatchRuntime };
+module.exports = {
+  runContentGenerationTask,
+  stripRepeatedChapterTitle,
+  createInitialSections,
+  buildContentOverallProgress,
+  __developerContentExpansionPatchRuntime,
+};

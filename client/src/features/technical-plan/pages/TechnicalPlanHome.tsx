@@ -1488,6 +1488,9 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
           sections={state.contentGenerationSections}
           onContentGenerationOptionsChange={saveContentGenerationOptions}
           onContentSaved={saveChapterContent}
+          onCancel={async (taskType) => {
+            await window.yibiao!.tasks.cancelTechnicalPlanTask({ type: taskType });
+          }}
         />
       )}
       {state.step === 'expand' && (

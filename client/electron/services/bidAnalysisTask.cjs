@@ -1,6 +1,7 @@
 const { buildBidSectionContextHint } = require('../utils/bidSectionContext.cjs');
 const { mergeSegmentedAiResults } = require('../utils/segmentedAiResultMerger.cjs');
 const { splitUserTextByContextLimit } = require('../utils/userTextSplitter.cjs');
+const { userFacingTaskError } = require('../utils/taskErrorText.cjs');
 
 const PROMPT_CACHE_WARMUP_DELAY_MS = 5000;
 const MARKDOWN_MISSING_RESULT = '未提取到';
@@ -199,6 +200,22 @@ function isMissingMarkdownResult(task, content) {
   return task.output === 'markdown' && String(content || '').trim() === MARKDOWN_MISSING_RESULT;
 }
 
+// 统一的"结果不可用"判定：空串、markdown 整项无结果标记、json 非法/空对象/数组。
+// 命中即触发一次完整重跑；第二次仍不可用则按项失败，杜绝垃圾结果落库流入下游
+// （全局事实/目录/正文都直接消费解析结果）。
+function isUnusableBidAnalysisResult(task, content) {
+  const text = String(content || '').trim();
+  if (!text) return true;
+  if (task.output === 'markdown') return text === MARKDOWN_MISSING_RESULT;
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return true;
+  }
+  return !parsed || typeof parsed !== 'object' || Array.isArray(parsed) || Object.keys(parsed).length === 0;
+}
+
 function buildTenderContextMessages(fileContent, sectionHint) {
   const messages = [
     { role: 'system', content: stableSystemPrompt },
@@ -258,10 +275,10 @@ async function runBidAnalysisPromptTaskOnce({ aiService, fileContent, fileSegmen
   });
 }
 
-// Markdown 整项无结果时完整重跑一次，第二次结果原样交给上层保存。
+// 结果不可用（空/无结果标记/非法 JSON）时完整重跑一次，第二次结果原样交给上层判定。
 async function runBidAnalysisPromptTask(options) {
   const content = await runBidAnalysisPromptTaskOnce(options);
-  if (!isMissingMarkdownResult(options.task, content)) return content;
+  if (!isUnusableBidAnalysisResult(options.task, content)) return content;
   return runBidAnalysisPromptTaskOnce(options);
 }
 
@@ -274,7 +291,7 @@ function runInvalidBidAndRejectionItemsExtraction({ aiService, fileContent, sect
   return runBidAnalysisPromptTask({ aiService, fileContent, task, sectionHint });
 }
 
-async function runBidAnalysisTask({ aiService, workspaceStore, updateTask, checkpointTask, payload }) {
+async function runBidAnalysisTask({ aiService, workspaceStore, updateTask, checkpointTask, taskControl, payload }) {
   const config = normalizeBidAnalysisConfig(payload.mode, payload.selected_task_ids || payload.selectedTaskIds);
   const mode = config.mode;
   const selectedTaskIdSet = new Set(config.taskIds);
@@ -283,6 +300,18 @@ async function runBidAnalysisTask({ aiService, workspaceStore, updateTask, check
   if (!String(fileContent || '').trim()) {
     throw new Error('请先上传招标文件，再开始解析');
   }
+  // 取消时仍在运行的子项随终态一起结算：否则子项行永久停留 'running'，
+  // UI 对已取消任务持续显示"解析中"（恢复逻辑仅在父任务 active 时触发，
+  // 覆盖不了正常取消路径）。按库内状态取 running 项，避免误盖已落库的项级错误。
+  taskControl?.registerCancelSettle?.(() => {
+    const dbTasks = workspaceStore.loadTechnicalPlan?.()?.bidAnalysisTasks || {};
+    const settledItems = {};
+    for (const [itemId, item] of Object.entries(dbTasks)) {
+      if (item?.status !== 'running') continue;
+      settledItems[itemId] = { ...item, status: 'error', error: '任务已取消' };
+    }
+    return Object.keys(settledItems).length ? { bidAnalysisTasks: settledItems } : {};
+  });
   const storedPlanForHint = workspaceStore.loadTechnicalPlan() || {};
   if (storedPlanForHint.bidSectionMode === 'multiple') {
     if (storedPlanForHint.bidSectionExtractionStatus !== 'success' || !Array.isArray(storedPlanForHint.bidSections) || storedPlanForHint.bidSections.length < 2) {
@@ -398,6 +427,12 @@ async function runBidAnalysisTask({ aiService, workspaceStore, updateTask, check
     if (!trimmedContent) {
       throw new Error(`${task.label}解析结果为空，请重新解析`);
     }
+    // 重跑一次后仍不可用：按项失败，不落库（JSON 项此前会把散文/截断结果当"事实"存下）
+    if (isUnusableBidAnalysisResult(task, trimmedContent)) {
+      throw new Error(task.output === 'json'
+        ? `${task.label}返回的结果不是合法 JSON，请重新解析`
+        : `${task.label}未提取到有效内容，请重新解析`);
+    }
 
     const completedItem = { id: task.id, label: task.label, status: 'success', content: trimmedContent };
     currentTasks = { ...currentTasks, [task.id]: completedItem };
@@ -414,11 +449,13 @@ async function runBidAnalysisTask({ aiService, workspaceStore, updateTask, check
   }
 
   function handleTaskError(task, error) {
-    const failedItem = { id: task.id, label: task.label, status: 'error', content: currentTasks[task.id]?.content || '', error: error.message || '解析失败' };
+    // 子项错误走与父任务同一归一化：供应商原始报错（状态码/端点）不直达界面
+    const facingError = userFacingTaskError(error, '解析失败');
+    const failedItem = { id: task.id, label: task.label, status: 'error', content: currentTasks[task.id]?.content || '', error: facingError };
     currentTasks = { ...currentTasks, [task.id]: failedItem };
     const progress = doneProgress(currentTasks);
     checkpointBidItem(
-      { status: 'running', progress, logs: [`${task.label}解析失败：${error.message || '未知错误'}`] },
+      { status: 'running', progress, logs: [`${task.label}解析失败：${facingError}`] },
       failedItem,
       progress,
     );
@@ -453,7 +490,9 @@ async function runBidAnalysisTask({ aiService, workspaceStore, updateTask, check
   if (missingRequiredTasks.length) {
     const missingLabels = missingRequiredTasks.map((task) => task.label).join('、');
     const message = `必填解析项未完成：${missingLabels}，请重新解析失败项。`;
-    checkpointTask({ status: 'error', progress: 100, error: message, logs: [message] });
+    // error 态进度封顶 99：有必填项未完成时 doneProgress 本就到不了 100，
+    // 硬编码 100 会让"失败"显示成满进度（与全项目 error 口径一致）
+    checkpointTask({ status: 'error', progress: 99, error: message, logs: [message] });
     return;
   }
 
@@ -465,6 +504,7 @@ module.exports = {
   buildTenderContextMessages,
   getBidAnalysisTaskById,
   getBidAnalysisTasks,
+  isUnusableBidAnalysisResult,
   runInvalidBidAndRejectionItemsExtraction,
   runBidAnalysisTask,
   runBidAnalysisPromptTask,

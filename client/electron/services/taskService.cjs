@@ -204,24 +204,9 @@ function isActiveTaskStatus(status) {
   return status === 'running' || status === 'pausing';
 }
 
-// 用户可见的任务错误文案：按错误码映射固定短句，其余消息剥离换行与绝对路径后截断，
-// 避免把堆栈、供应商端点、内部文件细节直接展示到界面（原始细节仍走诊断上报通道）。
-const TASK_ERROR_TEXT_BY_CODE = new Map([
-  ['AGENT_STALLED', '任务长时间无进展，已自动停止，请重新生成。'],
-  ['AGENT_DISCONNECTED', '与 AI 服务的连接中断，请重新生成。'],
-]);
-
-function userFacingTaskError(error, fallback = '任务执行失败') {
-  const code = String(error?.code || '');
-  if (TASK_ERROR_TEXT_BY_CODE.has(code)) return TASK_ERROR_TEXT_BY_CODE.get(code);
-  const message = String(error?.message || error || '').trim();
-  if (!message) return fallback;
-  const cleaned = message
-    .replace(/[\r\n]+/g, ' ')
-    .replace(/([A-Za-z]:[\\/]|\/(?:Users|home|tmp|var)\/)\S+/g, '[路径]')
-    .trim();
-  return (cleaned || fallback).slice(0, 200) || fallback;
-}
+// 用户可见错误文案的归一化实现抽在共享模块（utils/taskErrorText.cjs），
+// 供任务框架与非 agent 任务（如招标解析子项）复用，避免两侧循环引用。
+const { userFacingTaskError } = require('../utils/taskErrorText.cjs');
 
 function hasOwn(value, field) {
   return Object.prototype.hasOwnProperty.call(value || {}, field);
@@ -721,6 +706,9 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
       pauseRequested: false,
       // 重置/清空路径置 false：旧计划状态即将整体删除，迟到终态不得再落库（幽灵行）。
       persistTerminal: true,
+      // 多子项任务（如招标解析）注册取消结算钩子：取消终态 checkpoint 时把
+      // 仍在运行的子项聚合为 error，否则子项行永久停留 running。
+      cancelSettle: null,
       outlineSelectionWaiter: null,
       outlineSelectionResult: null,
       outlineSelectionAutoConfirmationId: null,
@@ -770,12 +758,16 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
         this.outlineSelectionAutoConfirmationId = null;
         if (!abortController.signal.aborted) abortController.abort(error);
       },
+      registerCancelSettle(fn) {
+        this.cancelSettle = typeof fn === 'function' ? fn : null;
+      },
       waitForSettlement() {
         return settledPromise;
       },
       dispose() {
         this.outlineSelectionWaiter?.reject?.(new Error('目录生成任务已结束'));
         this.outlineSelectionWaiter = null;
+        this.cancelSettle = null;
         autoConfirmationService.unregister(this.outlineSelectionAutoConfirmationId);
         this.outlineSelectionAutoConfirmationId = null;
       },
@@ -837,10 +829,21 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
       const reason = taskControl.signal.reason;
       const source = reason instanceof Error ? reason : (error instanceof Error ? error : null);
       const message = source?.message || '后台任务已取消';
+      // 取消结算钩子返回要并入终态 checkpoint 的业务状态（如运行中子项置 error）；
+      // 钩子抛错不影响父任务终态落库。
+      let settlePartial = {};
+      if (typeof taskControl.cancelSettle === 'function') {
+        try {
+          settlePartial = taskControl.cancelSettle() || {};
+        } catch (hookError) {
+          console.error('[task] 取消结算钩子执行失败', hookError);
+          settlePartial = {};
+        }
+      }
       try {
         commitTaskCheckpoint(
           { status: 'error', error: userFacingTaskError(message), pause_requested: false },
-          {},
+          settlePartial,
           { cancelled: true },
           { allowAborted: true },
         );

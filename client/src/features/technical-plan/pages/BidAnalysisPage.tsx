@@ -22,6 +22,7 @@ interface BidAnalysisPageProps {
   focusTaskRequest?: { taskId: string } | null;
   onProgressChange: (progress: number) => void;
   onConfigSaved: (state: TechnicalPlanState) => void;
+  onCancel: (taskType: string) => Promise<void>;
 }
 
 const modeOptions: Array<{ id: 'key' | 'full'; title: string; badge: string }> = [
@@ -214,6 +215,7 @@ function BidAnalysisPage({
   focusTaskRequest,
   onProgressChange,
   onConfigSaved,
+  onCancel,
 }: BidAnalysisPageProps) {
   const [running, setRunning] = useState(false);
   const [fullRerunLocked, setFullRerunLocked] = useState(false);
@@ -231,6 +233,7 @@ function BidAnalysisPage({
     nextTaskIds: string[];
   } | null>(null);
   const [progressCollapsed, setProgressCollapsed] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const { showToast } = useToast();
   const effectiveSelectedTaskIds = useMemo(() => getSelectedTaskIdsForMode(mode, selectedTaskIds), [mode, selectedTaskIds]);
   const selectedTasks = useMemo(() => {
@@ -331,6 +334,19 @@ function BidAnalysisPage({
     setDraftSelectedTaskIds(effectiveSelectedTaskIds);
     setDraftBidSectionMode(bidSectionMode);
   }, [bidSectionMode, effectiveSelectedTaskIds, settingsOpen]);
+
+  const handleCancelTask = async () => {
+    if (!onCancel || cancelling || task?.status !== 'running') return;
+    setCancelling(true);
+    try {
+      await onCancel('bid-analysis');
+      showToast('已发送取消请求，正在停止解析…', 'info');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '取消任务失败，请重试', 'error');
+    } finally {
+      setCancelling(false);
+    }
+  };
 
   const openSettingsDialog = () => {
     if (taskRunning) {
@@ -618,7 +634,20 @@ function BidAnalysisPage({
         <aside className="bid-analysis-task-pane" aria-label="解析任务列表">
           <div className="analysis-result-head bid-analysis-task-head">
             <strong>核心信息</strong>
-            <span>{doneCount}/{selectedTasks.length} 项</span>
+            <span className="bid-analysis-head-actions">
+              {doneCount}/{selectedTasks.length} 项
+              {task?.status === 'running' && (
+                <button
+                  type="button"
+                  className="outline-cancel-action"
+                  onClick={() => { void handleCancelTask(); }}
+                  disabled={cancelling}
+                  aria-label="取消招标文件解析"
+                >
+                  {cancelling ? '取消中…' : '取消'}
+                </button>
+              )}
+            </span>
           </div>
           <div className={`content-outline-stats bid-analysis-progress-summary${progressCollapsed ? ' is-collapsed' : ''}`}>
             <button type="button" onClick={() => setProgressCollapsed((prev) => !prev)} aria-expanded={!progressCollapsed}>

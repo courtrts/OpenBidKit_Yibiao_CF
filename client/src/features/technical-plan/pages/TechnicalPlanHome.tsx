@@ -1430,6 +1430,9 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
           focusTaskRequest={bidAnalysisFocusRequest}
           onProgressChange={(progress) => setState((prev) => ({ ...prev, bidAnalysisProgress: progress }))}
           onConfigSaved={(nextState) => setState((prev) => ({ ...prev, ...nextState }))}
+          onCancel={async (taskType) => {
+            await window.yibiao!.tasks.cancelTechnicalPlanTask({ type: taskType });
+          }}
         />
       )}
       {state.step === 'outline-generation' && (

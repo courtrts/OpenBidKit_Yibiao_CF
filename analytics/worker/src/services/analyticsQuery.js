@@ -28,11 +28,20 @@ export async function queryAnalytics(env, sql) {
     const text = await response.text();
 
     if (response.ok) {
+      let parsed;
       try {
-        return JSON.parse(text);
+        parsed = JSON.parse(text);
       } catch (error) {
         throw new Error(`Analytics Engine query returned invalid JSON: ${error?.message || String(error)}; sql=${compactSql(sql)}`);
       }
+      // AE 存在"HTTP 200 但 success:false / errors 非空"的失败形态（配额、内部部分失败）。
+      // 不在此拦截，下游一律 `data || []` 会把查询失败静默退化成"暂无数据 / 0"，
+      // 运营会把失败误读为当天无流量。失败摘要只进 worker 日志，对外仍由各路由固定文案兜底。
+      if (parsed && typeof parsed === 'object' && (parsed.success === false || (Array.isArray(parsed.errors) && parsed.errors.length > 0))) {
+        const detail = JSON.stringify(parsed.errors || parsed).slice(0, 300);
+        throw new Error(`Analytics Engine query reported failure: ${detail}; sql=${compactSql(sql)}`);
+      }
+      return parsed;
     }
 
     const retryable = retryableStatuses.has(response.status) && attempt < 4;
@@ -42,7 +51,9 @@ export async function queryAnalytics(env, sql) {
     }
 
     console.warn(`[analytics] ${message}; retrying`);
-    await sleep(500 * attempt);
+    // 固定间隔会让同批并发查询在同一时刻同步重试（惊群），在 AE 限流时自我恶化，
+    // 乘以 0.5–1.5 随机系数打散重试时刻。
+    await sleep(500 * attempt * (0.5 + Math.random()));
   }
 
   throw new Error(`Analytics Engine query failed after retries; sql=${compactSql(sql)}`);

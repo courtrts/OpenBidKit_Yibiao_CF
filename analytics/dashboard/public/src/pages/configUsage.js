@@ -75,11 +75,11 @@ const modelUsageGroups = [
   ['imageModelUsage', '生图模型请求'],
 ];
 
-function renderUsageGroups(target, usage, groups) {
+function renderUsageGroups(target, usage, groups, countLabel = '次数') {
   target.innerHTML = `<div class="usage-grid">${groups.map(([key, label]) => {
     const rows = usage?.[key] || [];
     const body = rows.length
-      ? `<table><thead><tr><th>取值</th><th>次数</th></tr></thead><tbody>${rows.map((row) => `
+      ? `<table><thead><tr><th>取值</th><th>${countLabel}</th></tr></thead><tbody>${rows.map((row) => `
           <tr>
             <td><code>${escapeHtml(labelConfigValue(key, row.value))}</code></td>
             <td>${formatNumber(row.events)}</td>
@@ -90,11 +90,11 @@ function renderUsageGroups(target, usage, groups) {
   }).join('')}</div>`;
 }
 
-function renderModelUsageGroups(target, usage, groups) {
+function renderModelUsageGroups(target, usage, groups, countLabel = '次数') {
   target.innerHTML = `<div class="usage-grid">${groups.map(([key, label]) => {
     const rows = usage?.[key] || [];
     const body = rows.length
-      ? `<table><thead><tr><th>服务商</th><th>域名</th><th>模型</th><th>次数</th><th>Total Tokens</th></tr></thead><tbody>${rows.map((row) => `
+      ? `<table><thead><tr><th>服务商</th><th>域名</th><th>模型</th><th>${countLabel}</th><th>Total Tokens</th></tr></thead><tbody>${rows.map((row) => `
           <tr>
             <td><code>${escapeHtml(labelModelProvider(key, row.provider))}</code></td>
             <td><code>${escapeHtml(row.endpoint_host || row.base_url || '-')}</code></td>
@@ -146,7 +146,8 @@ async function loadModelUsageData(rangeValue) {
 
 export async function loadConfigUsage() {
   const data = await loadConfigUsageData(state.configRange.value);
-  renderUsageGroups(state.configUsage, data.usage || {}, configUsageGroups);
+  // 历史口径是累计次数、窗口口径是窗口内次数，表头显式区分，避免两种口径混读。
+  renderUsageGroups(state.configUsage, data.usage || {}, configUsageGroups, state.configRange.value === 'history' ? '累计次数' : '次数');
 }
 
 export async function loadModelUsage() {
@@ -155,5 +156,5 @@ export async function loadModelUsage() {
   fillDatalist(state.modelProviderOptions, rows.map((row) => row.provider));
   fillDatalist(state.modelEndpointOptions, rows.map((row) => row.endpoint_host));
   fillDatalist(state.modelNameOptions, rows.map((row) => row.model));
-  renderModelUsageGroups(state.modelUsage, data.usage || {}, modelUsageGroups);
+  renderModelUsageGroups(state.modelUsage, data.usage || {}, modelUsageGroups, state.modelRange.value === 'history' ? '累计次数' : '次数');
 }

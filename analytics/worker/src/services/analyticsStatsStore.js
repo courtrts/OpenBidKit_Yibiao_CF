@@ -26,6 +26,9 @@ import { listAdminResources, listAllResourceAnalyticsKeys } from './resourceStor
 
 const UNKNOWN_VERSION = '未知版本';
 const MAX_ANALYTICS_ROWS = 100000;
+// 实时客户端查询里 NOT IN 排除封禁客户端的 ID 上限：封禁清单来自管理员手动操作，
+// 正常量级是个位数到几十；超限时跳过排除并告警（窗口客户端数临时含封禁对象），避免无界 SQL。
+const MAX_BLOCKED_CLIENT_FILTER_IDS = 1000;
 const RECENT_CLIENT_CREATED_MAX_AGE_DAYS = 1;
 const MAX_RECENT_CLIENT_WRITE_ATTEMPTS = 10000;
 const RECENT_CLIENT_WRITE_ATTEMPT_TTL_MS = 60000;
@@ -767,6 +770,10 @@ export async function blockIpAndDeleteStatsClients(env, projectName, blockedIp, 
     `).bind(normalizedProjectName, createdAt, normalizedProjectName),
   );
   const results = await batchRun(db, statements);
+  // stats_versions.client_count 原本只由凌晨 rollup 刷新（最长滞后约 24h），
+  // 封禁删除了 stats_clients 行后立即用小表重算对齐，让概览 total_clients
+  // 与流量页版本表客户端数在封禁生效后即时一致。
+  await batchRun(db, prepareVersionClientCountStatements(db, normalizedProjectName, createdAt));
   const blockedIpRow = results[1]?.results?.[0] || { ip: blockedIp, reason: normalizeText(reason, 500), createdAt };
   return {
     blockedIp: blockedIpRow,
@@ -854,6 +861,9 @@ export async function blockVersionAndDeleteStatsClients(env, projectName, versio
   `).bind(normalizedProjectName, createdAt, normalizedProjectName));
 
   const results = await batchRun(db, statements);
+  // 同 IP 封禁：封禁删除 stats_clients 行后立即重算 stats_versions.client_count，
+  // 不等凌晨 rollup，版本表客户端数即时与删除结果一致。
+  await batchRun(db, prepareVersionClientCountStatements(db, normalizedProjectName, createdAt));
   const deletedClientCount = results
     .slice(0, statements.length - 1)
     .filter((_, index) => index % 3 === 2)
@@ -938,6 +948,23 @@ export async function queryStatsClientDetail(env, projectName, clientId, range) 
   };
 }
 
+// 当前项目处于生效中的封禁客户端（IP 封禁 + 版本封禁的墓碑表并集）。
+// 供实时窗口客户端查询排除，与 rollup 写 stats_clients 时的 NOT EXISTS 口径一致。
+async function queryBlockedClientIds(env, projectName) {
+  const db = requireStatsDb(env);
+  const rows = await all(db, `
+    SELECT client_id FROM stats_blocked_clients WHERE project_name = ?
+    UNION
+    SELECT client_id FROM stats_blocked_version_clients WHERE project_name = ?
+  `, [projectName, projectName]);
+  const ids = Array.from(new Set(rows.map((row) => normalizeText(row.client_id, 120)).filter(Boolean)));
+  if (ids.length > MAX_BLOCKED_CLIENT_FILTER_IDS) {
+    console.warn(`[analytics] ${projectName} 封禁客户端列表 ${ids.length} 条超过 ${MAX_BLOCKED_CLIENT_FILTER_IDS} 上限，窗口客户端数暂不排除封禁对象`);
+    return [];
+  }
+  return ids;
+}
+
 export async function queryStatsTraffic(env, projectName, range) {
   if (range === 'history') {
     const db = requireStatsDb(env);
@@ -968,6 +995,13 @@ export async function queryStatsTraffic(env, projectName, range) {
   const project = sqlString(projectName);
   const rangeWhere = aeRangeCondition(range);
   const versionExpr = `if(blob4 = '', ${sqlString(UNKNOWN_VERSION)}, blob4)`;
+  // 客户端数与历史 tab 对齐：每个客户端按"窗口内最后使用的版本"归属（argMax，
+  // 与 rollup 客户端聚合同形），窗口内用过多个版本的客户端只计一次，列合计即窗口去重客户端数；
+  // 同时排除封禁客户端，与 stats_clients 的 NOT EXISTS 口径一致，封禁页 deletedClientCount 对得上。
+  const blockedClients = await queryBlockedClientIds(env, projectName);
+  const blockedWhere = blockedClients.length
+    ? `AND blob7 NOT IN ${blockedClients.map((id) => sqlString(id)).join(', ')}`
+    : '';
   const [pages, versions, versionClients] = await Promise.all([
     queryAnalytics(env, `
       SELECT
@@ -994,14 +1028,19 @@ export async function queryStatsTraffic(env, projectName, range) {
       LIMIT 100
     `),
     queryAnalytics(env, `
-      SELECT
-        ${versionExpr} AS version,
-        COUNT(DISTINCT blob7) AS clients
-      FROM ${DATASET}
-      WHERE blob1 = ${project}
-        AND blob2 IN ${allowedEventsSql()}
-        AND blob7 != ''
-        AND ${rangeWhere}
+      SELECT version, COUNT(*) AS clients
+      FROM (
+        SELECT
+          blob7 AS clientId,
+          argMax(${versionExpr}, timestamp) AS version
+        FROM ${DATASET}
+        WHERE blob1 = ${project}
+          AND blob2 IN ${allowedEventsSql()}
+          AND blob7 != ''
+          ${blockedWhere}
+          AND ${rangeWhere}
+        GROUP BY clientId
+      )
       GROUP BY version
       LIMIT 100
     `),
@@ -1028,35 +1067,56 @@ async function queryConfigHistoryField(db, projectName, field) {
   `, [projectName, field.key]);
 }
 
-async function queryConfigAeField(env, projectName, range, field) {
+// 实时配置用量一条查询覆盖全部字段（与 rollup 的 queryRollupConfigRows 同形，
+// 此前 16 条并行全窗口扫描是本页最大预算消耗点，AE 限流时 16 路齐刷自我放大）；
+// 聚合结果按字段在 JS 侧拆分，取 events 前 50，对齐历史侧 LIMIT 50 的展示语义。
+async function queryConfigAeRows(env, projectName, range) {
   const project = sqlString(projectName);
   const result = await queryAnalytics(env, `
     SELECT
+      blob9 AS fieldKey,
       blob10 AS value,
       SUM(_sample_interval) AS events
     FROM ${DATASET}
     WHERE blob1 = ${project}
       AND blob2 = 'config_usage'
-      AND blob9 = ${sqlString(field.key)}
+      AND blob9 IN ${configUsageKeysSql()}
       AND blob10 != ''
       AND ${aeRangeCondition(range)}
-    GROUP BY value
+    GROUP BY fieldKey, value
     ORDER BY events DESC, value ASC
-    LIMIT 50
+    LIMIT ${MAX_ANALYTICS_ROWS}
   `);
-  return result.data || [];
+  return (result.data || []).map((row) => ({
+    fieldKey: String(row.fieldKey || ''),
+    value: String(row.value || ''),
+    events: number(row.events),
+  }));
 }
 
 export async function queryStatsConfigUsage(env, projectName, range) {
-  const results = range === 'history'
-    ? await Promise.all(CONFIG_USAGE_FIELDS.map((field) => queryConfigHistoryField(requireStatsDb(env), projectName, field)))
-    : await Promise.all(CONFIG_USAGE_FIELDS.map((field) => queryConfigAeField(env, projectName, range, field)));
   const usage = {};
-  CONFIG_USAGE_FIELDS.forEach((field, index) => {
-    usage[field.key] = (results[index] || []).map((row) => ({
-      value: row.value,
-      events: number(row.events),
-    }));
+  if (range === 'history') {
+    const results = await Promise.all(CONFIG_USAGE_FIELDS.map((field) => queryConfigHistoryField(requireStatsDb(env), projectName, field)));
+    CONFIG_USAGE_FIELDS.forEach((field, index) => {
+      usage[field.key] = (results[index] || []).map((row) => ({
+        value: row.value,
+        events: number(row.events),
+      }));
+    });
+    return usage;
+  }
+
+  const byField = new Map();
+  for (const row of await queryConfigAeRows(env, projectName, range)) {
+    if (!byField.has(row.fieldKey)) byField.set(row.fieldKey, []);
+    byField.get(row.fieldKey).push(row);
+  }
+  CONFIG_USAGE_FIELDS.forEach((field) => {
+    usage[field.key] = (byField.get(field.key) || [])
+      .sort((a, b) => (b.events - a.events) || (a.value < b.value ? -1 : a.value > b.value ? 1 : 0))
+      .slice(0, 50)
+      .map((row) => ({ value: row.value, events: row.events }));
   });
   return usage;
 }

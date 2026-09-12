@@ -5,6 +5,9 @@ const {
 const { runTemplateExtractionTask } = require('./templateExtractionTask.cjs');
 
 const DEFAULT_ESTIMATED_SECTION_WORDS = 3000;
+// AI 小节数量与目标不符时，用户连续不"接受当前结果"的最大调整轮数；
+// 超过后强制进入审核并保留当前结果，避免无界重问循环逐轮消耗完整 agent stage。
+const MAX_LEAF_ADJUSTMENT_ATTEMPTS = 3;
 const OUTLINE_OUTPUT_FILE = 'outline.json';
 const TECHNICAL_SCORE_GROUPS_FILE = 'technical-score-groups.json';
 const SCORE_DIRECTORY_PLAN_FILE = 'score-directory-plan.json';
@@ -256,14 +259,16 @@ function normalizeWordControlOptions(value) {
 
 function deriveTargetLeafCount(options) {
   const sectionWords = options.sectionWords > 0 ? options.sectionWords : DEFAULT_ESTIMATED_SECTION_WORDS;
+  // 目标至少为 1：小字数配置下 floor(max/section)-2 可能为负，负目标会让下游
+  // schema（target_ai_leaf_count minimum:1）无解，且审核 prompt 出现"1 至 -2"的荒谬区间。
   if (options.minimumWords > 0 && options.maximumWords > 0) {
-    return Math.ceil(((options.minimumWords + options.maximumWords) / 2) / sectionWords);
+    return Math.max(1, Math.ceil(((options.minimumWords + options.maximumWords) / 2) / sectionWords));
   }
   if (options.maximumWords > 0) {
-    return Math.floor(options.maximumWords / sectionWords) - 2;
+    return Math.max(1, Math.floor(options.maximumWords / sectionWords) - 2);
   }
   if (options.minimumWords > 0) {
-    return Math.ceil(options.minimumWords / sectionWords) + 2;
+    return Math.max(1, Math.ceil(options.minimumWords / sectionWords) + 2);
   }
   return null;
 }
@@ -284,6 +289,63 @@ function enforceMinimumLeafTarget(targetLeafCount, fixedAiLeafCount, technicalBr
     return Math.min(adjustedTarget, maximumLeafCount);
   }
   return adjustedTarget;
+}
+
+// 评分目录规划文件的宿主侧复验：agent 侧 schema 只约束其自身工具调用行为，
+// 阶段衔接处若放行缺字段/重复分支的规划，矛盾数据会直接流入子目录与审核 prompt。
+function assertScoreDirectoryPlan(plan) {
+  if (!plan || typeof plan !== 'object' || Array.isArray(plan)) {
+    throw new Error('评分目录规划不是合法对象，请重新生成目录。');
+  }
+  if (!Array.isArray(plan.branches)) {
+    throw new Error('评分目录规划缺少技术分支列表，请重新生成目录。');
+  }
+  const seen = new Set();
+  for (const branch of plan.branches) {
+    const branchId = String(branch?.branch_id || '').trim();
+    const rootId = String(branch?.root_id || '').trim();
+    const rootTitle = String(branch?.root_title || '').trim();
+    if (!branchId || !rootId || !rootTitle) {
+      throw new Error('评分目录规划存在分支字段缺失，请重新生成目录。');
+    }
+    if (seen.has(branchId)) {
+      throw new Error('评分目录规划存在重复分支标识，请重新生成目录。');
+    }
+    seen.add(branchId);
+  }
+}
+
+// AI 小节分配结果的宿主侧复验：分配之和必须等于可分配数且恰好覆盖全部技术分支，
+// 否则 children prompt 拿到矛盾目标，agent 要么报失败要么写出与目标不符的目录。
+function assertLeafAllocations(payload, technicalBranches, allocatableAiLeafCount) {
+  const allocations = payload?.allocations;
+  if (!Array.isArray(allocations) || !allocations.length) {
+    throw new Error('AI 生成小节分配结果缺失，请重新生成目录。');
+  }
+  const expectedIds = new Set(technicalBranches.map((branch) => branch.branch_id));
+  const seen = new Set();
+  let total = 0;
+  for (const item of allocations) {
+    const branchId = String(item?.branch_id || '').trim();
+    if (!branchId || !expectedIds.has(branchId)) {
+      throw new Error('AI 生成小节分配结果包含技术分支之外的条目，请重新生成目录。');
+    }
+    if (seen.has(branchId)) {
+      throw new Error('AI 生成小节分配结果存在重复分支条目，请重新生成目录。');
+    }
+    seen.add(branchId);
+    const leafCount = Number(item?.leaf_count);
+    if (!Number.isInteger(leafCount) || leafCount < 1) {
+      throw new Error('AI 生成小节分配数量不合法，请重新生成目录。');
+    }
+    total += leafCount;
+  }
+  if (seen.size !== expectedIds.size) {
+    throw new Error('AI 生成小节分配结果未覆盖全部技术分支，请重新生成目录。');
+  }
+  if (allocatableAiLeafCount !== null && total !== allocatableAiLeafCount) {
+    throw new Error(`AI 生成小节分配总和为 ${total}，与可分配数 ${allocatableAiLeafCount} 不一致，请重新生成目录。`);
+  }
 }
 
 // 统一目录层级编号，并按父子节点形态整理目录字段。
@@ -1063,6 +1125,7 @@ async function runOutlineGenerationTaskV2({ aiService, agentService, ordinaryAge
 
       if (meta.workflow_stage === 'score-planning') {
         scoreDirectoryPlan = readJson(await meta.readFile(SCORE_DIRECTORY_PLAN_FILE), SCORE_DIRECTORY_PLAN_FILE);
+        assertScoreDirectoryPlan(scoreDirectoryPlan);
         lockedRoots = attachBranchIdsToRoots(lockedRoots, scoreDirectoryPlan);
         technicalBranches = scoreDirectoryPlan.branches.map((branch) => ({
           branch_id: branch.branch_id,
@@ -1085,6 +1148,18 @@ async function runOutlineGenerationTaskV2({ aiService, agentService, ordinaryAge
           }
         }
         allocatedAiLeafCount = targetLeafCount === null ? null : targetLeafCount - fixedAiLeafCount;
+        if (allocatedAiLeafCount !== null) {
+          if (technicalBranches.length === 0) {
+            throw new Error('评分目录规划没有技术分支，无法分配 AI 生成小节，请重新生成目录。');
+          }
+          // 多分支时每分支至少 1 个 AI 小节（与分配 schema minimum:1 一致），不足即配置矛盾，提前报配置错误。
+          const minimumAllocatable = technicalBranches.length > 1 ? technicalBranches.length : 1;
+          if (allocatedAiLeafCount < minimumAllocatable) {
+            throw new Error(
+              `目录字数配置过小：当前可分配 AI 生成小节仅 ${allocatedAiLeafCount} 个，但技术分支至少需要 ${minimumAllocatable} 个（每分支至少 1 个）。请提高全文最大字数后重新生成目录。`,
+            );
+          }
+        }
         if (allocatedAiLeafCount !== null && technicalBranches.length > 1) {
           publish('技术方案目录已确认，Agent 正在分配 AI 生成小节', 50);
           return {
@@ -1111,6 +1186,7 @@ async function runOutlineGenerationTaskV2({ aiService, agentService, ordinaryAge
 
       if (meta.workflow_stage === 'leaf_allocation') {
         const allocationPayload = readJson(await meta.readFile(LEAF_ALLOCATION_FILE), LEAF_ALLOCATION_FILE);
+        assertLeafAllocations(allocationPayload, technicalBranches, allocatedAiLeafCount);
         return continueWithChildrenGeneration(allocationPayload.allocations);
       }
 
@@ -1128,6 +1204,12 @@ async function runOutlineGenerationTaskV2({ aiService, agentService, ordinaryAge
 
       if (latestLeafAnswer?.selected_option === '接受当前结果') {
         leafWarning = `AI 生成小节目标为 ${targetLeafCount}，用户已接受当前 ${actualLeafCount} 个。`;
+        return continueWithOutlineReview();
+      }
+
+      // 重问轮次封顶：用户持续不"接受当前结果"时强制进入审核，成本有界，结果以 warning 留痕。
+      if (wordAdjustmentAttempts >= MAX_LEAF_ADJUSTMENT_ATTEMPTS) {
+        leafWarning = `AI 生成小节数量经 ${wordAdjustmentAttempts} 轮调整后仍未达标（目标 ${targetLeafCount}，当前 ${actualLeafCount}），已保留当前结果并进入审核。`;
         return continueWithOutlineReview();
       }
 
@@ -1302,4 +1384,8 @@ module.exports = {
   createScorePlanningPrompt,
   createChildrenPrompt,
   enforceMinimumLeafTarget,
+  deriveTargetLeafCount,
+  assertScoreDirectoryPlan,
+  assertLeafAllocations,
+  MAX_LEAF_ADJUSTMENT_ATTEMPTS,
 };

@@ -31,6 +31,7 @@ interface OutlineEditPageProps {
   onOutlineSelectionSaved: (request: SaveOutlineSelectionRequest) => Promise<void>;
   onOpenBidTemplate?: () => Promise<void>;
   bidTemplateExists?: boolean;
+  onCancel: (taskType: string) => Promise<void>;
   onSortGuardChange?: (guard: OutlineSortGuard | null) => void;
 }
 
@@ -340,6 +341,7 @@ function OutlineEditPage({
   task,
   contentTaskStatus,
   aiAdjustmentRunning = false,
+  onCancel,
   onOutlineConfigChange,
   onOutlineSaved,
   onOutlineSelectionSaved,
@@ -379,6 +381,7 @@ function OutlineEditPage({
   const [savingOutlineItem, setSavingOutlineItem] = useState(false);
   const [selectionDialogOpen, setSelectionDialogOpen] = useState(false);
   const [savingOutlineSelection, setSavingOutlineSelection] = useState(false);
+  const [cancellingOutlineTask, setCancellingOutlineTask] = useState(false);
   const [draggingItemId, setDraggingItemId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTargetState | null>(null);
   const logListRef = useRef<HTMLDivElement | null>(null);
@@ -389,6 +392,7 @@ function OutlineEditPage({
   const selectedItem = activeOutlineData && selectedItemId ? findOutlineItem(activeOutlineData.outline, selectedItemId) : null;
   const taskRunning = task?.status === 'running';
   const taskFailed = task?.status === 'error';
+  const taskPaused = task?.status === 'pausing' || task?.status === 'paused';
   const outlineSelection = task?.stats?.outline_selection;
   const hasOutlineSelection = Boolean(outlineSelection?.items?.length);
   const awaitingOutlineSelection = Boolean(taskRunning && hasOutlineSelection && !outlineSelection?.confirmed);
@@ -403,21 +407,25 @@ function OutlineEditPage({
     ? Math.max(5, Math.min(99, task?.progress || 5))
     : taskFailed
       ? Math.max(0, Math.min(99, task?.progress || 0))
-      : outlineData || task?.status === 'success'
-        ? 100
-        : 0;
+      : taskPaused
+        ? Math.max(0, Math.min(99, task?.progress || 0))
+        : outlineData || task?.status === 'success'
+          ? 100
+          : 0;
   const statusText = awaitingOutlineSelection
     ? '待确认'
     : generating
       ? '运行中'
     : taskFailed
       ? '失败'
-      : outlineData
-        ? '已完成'
-        : hasOutlineSelection
-          ? outlineSelection?.confirmed ? '已确认' : '待确认'
-          : '未开始';
-  const aiStatusTitle = awaitingOutlineSelection ? '等待确认一级目录' : generating ? 'AI 正在工作' : taskFailed ? '生成失败' : outlineData ? '目录已生成' : '等待生成';
+      : taskPaused
+        ? '已暂停'
+        : outlineData
+          ? '已完成'
+          : hasOutlineSelection
+            ? outlineSelection?.confirmed ? '已确认' : '待确认'
+            : '未开始';
+  const aiStatusTitle = awaitingOutlineSelection ? '等待确认一级目录' : generating ? 'AI 正在工作' : taskFailed ? '生成失败' : taskPaused ? '任务已暂停' : outlineData ? '目录已生成' : '等待生成';
   const statusMessage = taskFailed ? task?.error || latestLog || '目录生成失败，请查看开发者日志。' : latestLog || '点击生成目录后，这里会显示目录生成、审核和修正过程。';
   const startedAt = task?.started_at ? Date.parse(task.started_at) : NaN;
   const updatedAt = task?.updated_at ? Date.parse(task.updated_at) : NaN;
@@ -599,10 +607,26 @@ function OutlineEditPage({
     }
   };
 
+  const handleCancelOutlineTask = async () => {
+    if (!onCancel || cancellingOutlineTask || task?.status !== 'running') return;
+    setCancellingOutlineTask(true);
+    try {
+      await onCancel('outline-generation');
+      showToast('已发送取消请求，正在停止目录生成…', 'info');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '取消任务失败，请重试', 'error');
+    } finally {
+      setCancellingOutlineTask(false);
+    }
+  };
+
   const generateOutline = async () => {
     const lockMessage = getMutationLockMessage();
     if (lockMessage) {
-      throw new Error(lockMessage);
+      // 锁拦截走 toast 提示（与 saveOutlineChange 口径一致）：此函数由对话框按钮
+      // onClick 直接调用，throw 会变成 unhandled rejection，用户点了没反应也不知原因。
+      showToast(lockMessage, 'info');
+      return;
     }
     if (!projectOverview) {
       showToast('请先完成招标文件解析', 'info');
@@ -722,6 +746,7 @@ function OutlineEditPage({
   const getMutationLockMessage = () => {
     if (generating) return '目录生成任务正在运行，当前目录暂不可编辑';
     if (contentMutationLocked) return '正文生成任务正在运行或暂停中，请结束后再调整目录';
+    if (aiAdjustmentRunning) return 'AI 正在调整目录，当前目录暂不可编辑';
     if (savingOutlineItem) return '目录正在保存中，请稍候';
     return '';
   };
@@ -1155,11 +1180,6 @@ function OutlineEditPage({
             );
           })}
         </div>
-        {outlineModeRequiresRegeneration && (
-          <div className="outline-word-control-notice">
-            技术文件结构已改变，需要重新生成目录后才能生效！
-          </div>
-        )}
       </section>
     );
   };
@@ -1193,6 +1213,11 @@ function OutlineEditPage({
             );
           })}
         </div>
+        {outlineModeRequiresRegeneration && (
+          <div className="outline-word-control-notice">
+            技术文件结构已改变，需要重新生成目录后才能生效！
+          </div>
+        )}
       </section>
     );
   };
@@ -1348,7 +1373,20 @@ function OutlineEditPage({
         <aside className="outline-progress-panel">
           <div className="analysis-result-head">
             <strong>生成过程</strong>
-            <span>{statusText}</span>
+            <span className="outline-progress-head-actions">
+              {statusText}
+              {task?.status === 'running' && (
+                <button
+                  type="button"
+                  className="outline-cancel-action"
+                  onClick={() => { void handleCancelOutlineTask(); }}
+                  disabled={cancellingOutlineTask}
+                  aria-label="取消目录生成任务"
+                >
+                  {cancellingOutlineTask ? '取消中…' : '取消'}
+                </button>
+              )}
+            </span>
           </div>
           <div className={`content-outline-stats outline-progress-summary${progressCollapsed ? ' is-collapsed' : ''}`}>
             <button type="button" onClick={() => setProgressCollapsed((prev) => !prev)} aria-expanded={!progressCollapsed}>
@@ -1418,7 +1456,9 @@ function OutlineEditPage({
               <strong>{awaitingOutlineSelection ? '一级目录已生成' : '尚未生成目录'}</strong>
               <p>{awaitingOutlineSelection
                 ? '请查看并确认需要继续使用的一级目录。'
-                : taskFailed ? '上次目录生成未完成，请重新生成目录。' : '先完成招标文件解析，再生成技术方案目录。'}</p>
+                : taskFailed ? '上次目录生成未完成，请重新生成目录。'
+                  : projectOverview ? '尚未生成目录。请在左侧确认字数配置与参考知识库后，点击“生成目录”开始。'
+                    : '先完成招标文件解析，再生成技术方案目录。'}</p>
             </div>
           )}
         </section>
@@ -1432,13 +1472,15 @@ function OutlineEditPage({
           </div>
           {selectedItem ? (
             <div className="outline-detail-body">
-              {(generating || contentMutationLocked || sorting) && (
+              {(generating || contentMutationLocked || sorting || aiAdjustmentRunning) && (
                 <div className="outline-detail-lock">
                   {sorting
                     ? '目录排序中，当前目录暂不可编辑。'
                     : contentMutationLocked
                       ? '正文生成任务正在运行或暂停中，当前目录暂不可编辑。'
-                      : '目录生成任务正在运行，当前目录暂不可编辑，避免覆盖后台生成结果。'}
+                      : aiAdjustmentRunning
+                        ? 'AI 正在调整目录，当前目录暂不可编辑，待调整结束后自动恢复。'
+                        : '目录生成任务正在运行，当前目录暂不可编辑，避免覆盖后台生成结果。'}
                 </div>
               )}
               {editingItemId === selectedItem.id ? (

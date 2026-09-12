@@ -1451,6 +1451,9 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
           onOutlineConfigChange={saveOutlineConfig}
           onOutlineSaved={saveOutline}
           onOutlineSelectionSaved={saveOutlineSelection}
+          onCancel={async (taskType) => {
+            await window.yibiao!.tasks.cancelTechnicalPlanTask({ type: taskType });
+          }}
           bidTemplateExists={Boolean(state.bidTemplateExists)}
           onOpenBidTemplate={openBidTemplate}
           onSortGuardChange={(guard) => {

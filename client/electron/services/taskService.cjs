@@ -892,6 +892,8 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
       if (!waiter) throw new Error('当前目录任务不在一级目录确认阶段');
       const items = Array.isArray(request.items) ? request.items : [];
       const selectedIds = Array.isArray(request.selectedIds) ? request.selectedIds : [];
+      // 手动确认路径的空选择拦截：空 lockedRoots 会让阶段 2 以空目录运行，只能靠 agent 兜底失败。
+      if (!selectedIds.length) throw new Error('请至少选择一个一级目录项');
       autoConfirmationService.unregister(taskControl.outlineSelectionAutoConfirmationId);
       taskControl.outlineSelectionAutoConfirmationId = null;
       const checkpoint = checkpointTask({

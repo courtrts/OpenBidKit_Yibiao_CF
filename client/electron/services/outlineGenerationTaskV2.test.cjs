@@ -6,6 +6,9 @@ const {
   createScorePlanningPrompt,
   createChildrenPrompt,
   enforceMinimumLeafTarget,
+  deriveTargetLeafCount,
+  assertScoreDirectoryPlan,
+  assertLeafAllocations,
 } = require('./outlineGenerationTaskV2.cjs');
 
 test('独立成册模式直接以技术评分大项作为一级目录', () => {
@@ -57,4 +60,71 @@ test('独立成册末级小节目标至少覆盖每个技术分支', () => {
     }),
     /最多容纳 5 个 AI 生成小节，但独立成册目录至少需要 6 个/,
   );
+});
+
+test('目标叶子数下限钳制：小字数配置不得产出负/零目标', () => {
+  // max/section < 2 时原式 floor(max/section)-2 会为负，负目标让分配 schema 无解
+  assert.equal(deriveTargetLeafCount({ minimumWords: 0, maximumWords: 2000, sectionWords: 3000, strictSectionWords: false }), 1);
+  assert.equal(deriveTargetLeafCount({ minimumWords: 0, maximumWords: 6000, sectionWords: 3000, strictSectionWords: false }), 1);
+  // 正常配置保持原式
+  assert.equal(deriveTargetLeafCount({ minimumWords: 0, maximumWords: 15000, sectionWords: 3000, strictSectionWords: false }), 3);
+  assert.equal(deriveTargetLeafCount({ minimumWords: 3000, maximumWords: 9000, sectionWords: 3000, strictSectionWords: false }), 2);
+  assert.equal(deriveTargetLeafCount({ minimumWords: 3000, maximumWords: 0, sectionWords: 3000, strictSectionWords: false }), 3);
+  assert.equal(deriveTargetLeafCount({ minimumWords: 0, maximumWords: 0, sectionWords: 3000, strictSectionWords: false }), null);
+});
+
+test('评分目录规划宿主侧复验', () => {
+  const validPlan = {
+    branches: [
+      { branch_id: 'b1', root_id: '1', root_title: '总体部署' },
+      { branch_id: 'b2', root_id: '2', root_title: '关键技术' },
+    ],
+    allow_root_changes: false,
+  };
+  assert.doesNotThrow(() => assertScoreDirectoryPlan(validPlan));
+  assert.doesNotThrow(() => assertScoreDirectoryPlan({ branches: [] }));
+  assert.throws(() => assertScoreDirectoryPlan(null), /不是合法对象/);
+  assert.throws(() => assertScoreDirectoryPlan({}), /缺少技术分支列表/);
+  assert.throws(
+    () => assertScoreDirectoryPlan({ branches: [{ branch_id: 'b1', root_id: '', root_title: 'x' }] }),
+    /分支字段缺失/,
+  );
+  assert.throws(
+    () => assertScoreDirectoryPlan({
+      branches: [
+        { branch_id: 'b1', root_id: '1', root_title: 'a' },
+        { branch_id: 'b1', root_id: '2', root_title: 'b' },
+      ],
+    }),
+    /重复分支标识/,
+  );
+});
+
+test('AI 小节分配结果宿主侧复验', () => {
+  const branches = [
+    { branch_id: 'b1', root_id: '1', root_title: 'A' },
+    { branch_id: 'b2', root_id: '2', root_title: 'B' },
+  ];
+  const ok = { allocations: [{ branch_id: 'b1', leaf_count: 2 }, { branch_id: 'b2', leaf_count: 3 }] };
+  assert.doesNotThrow(() => assertLeafAllocations(ok, branches, 5));
+  assert.throws(() => assertLeafAllocations({ allocations: [] }, branches, 5), /分配结果缺失/);
+  assert.throws(() => assertLeafAllocations(ok, branches, 6), /总和为 5，与可分配数 6 不一致/);
+  assert.throws(
+    () => assertLeafAllocations({ allocations: [{ branch_id: 'b1', leaf_count: 5 }] }, branches, 5),
+    /未覆盖全部技术分支/,
+  );
+  assert.throws(
+    () => assertLeafAllocations({ allocations: [{ branch_id: 'x', leaf_count: 5 }] }, branches, 5),
+    /技术分支之外的条目/,
+  );
+  assert.throws(
+    () => assertLeafAllocations({ allocations: [{ branch_id: 'b1', leaf_count: 2 }, { branch_id: 'b1', leaf_count: 3 }] }, branches, 5),
+    /重复分支条目/,
+  );
+  assert.throws(
+    () => assertLeafAllocations({ allocations: [{ branch_id: 'b1', leaf_count: 0 }, { branch_id: 'b2', leaf_count: 5 }] }, branches, 5),
+    /分配数量不合法/,
+  );
+  // target 为 null（agent-decides 模式）时只校验结构，不强求总和
+  assert.doesNotThrow(() => assertLeafAllocations(ok, branches, null));
 });

@@ -405,5 +405,23 @@ export async function cleanupExpiredAgentErrors(env) {
     total.deletedCount += deleted.deletedCount;
     total.deletedBytes += deleted.deletedBytes;
   }
+  await calibrateUsedBytes(env.ANALYTICS_DB);
   return total;
+}
+
+// 每日校准 used_bytes：reserve 预占与 INSERT 落行是两条独立语句（中间夹 R2
+// 写入，无法并入同一 D1 事务），isolate 在两步之间被杀会留下永远多计的配额
+// 占用，把项目长期顶在 capacity-exceeded。这里把每个项目的 used_bytes 重算为
+// ready 行的实际 SUM（幂等的赋值而非增量，双跑安全），随每日清理 cron 运行。
+async function calibrateUsedBytes(db) {
+  const result = await db.prepare(`
+    UPDATE agent_error_settings
+    SET used_bytes = (
+      SELECT COALESCE(SUM(l.compressed_bytes), 0)
+      FROM agent_error_logs l
+      WHERE l.project_name = agent_error_settings.project_name AND l.status = 'ready'
+    ),
+    updated_at = ?
+  `).bind(nowIso()).run();
+  return number(result?.meta?.changes);
 }

@@ -6,8 +6,17 @@ const { isExpectedAgentInterruption } = require('./agentInterruption.cjs');
 const ANALYTICS_ENDPOINT = process.env.YIBIAO_AGENT_ERROR_ENDPOINT || 'https://toubiao.ztok.dpdns.org/agent-errors';
 const PROJECT_NAME = 'yibiao-client';
 const REPORT_SCHEMA_VERSION = 1;
-const MAX_COMPRESSED_BYTES = 95 * 1024 * 1024;
+// 与服务端 agentErrorStore 的 10MB 上限对齐：此前 95MB 会让超大工作区整包
+// 读入独立进程并上传到服务端才收到 400，浪费带宽且报告静默丢失。
+const MAX_COMPRESSED_BYTES = 10 * 1024 * 1024;
 const UPLOAD_TIMEOUT_MS = 30 * 1000;
+// 相同错误签名（版本+错误名/码+摘要前缀）的 1 小时去重窗口：客户端配置损坏
+// 等场景下 agent 每次失败都会触发上报，不去重会持续消耗项目诊断配额。
+const REPORT_DEDUP_WINDOW_MS = 60 * 60 * 1000;
+const REPORT_DEDUP_MAX_ENTRIES = 100;
+// 上游 LLM 原始响应可能回显完整 prompt/用户对话，诊断只需要头部片段
+// （错误信息/错误 JSON 体都在头部），截断后由独立进程的脱敏兜底。
+const RAW_RESPONSE_SNIPPET_CHARS = 8000;
 const PREFLIGHT_TIMEOUT_MS = 5 * 1000;
 const PROCESS_ENTRY = path.join(__dirname, 'agentErrorReportProcess.cjs');
 const PI_RUNTIME_ID = 'pi';
@@ -74,6 +83,23 @@ function serializeErrorCore(error, depth = 0) {
   };
 }
 
+// 把任意诊断值压成有界的字符串片段（对象先序列化），超长截断并标注原始长度。
+function toDiagnosticSnippet(value, limit = RAW_RESPONSE_SNIPPET_CHARS) {
+  if (value === null || value === undefined) return null;
+  let text;
+  if (typeof value === 'string') text = value;
+  else {
+    try {
+      text = JSON.stringify(value);
+    } catch {
+      text = String(value);
+    }
+  }
+  if (text === undefined) return null;
+  if (text.length > limit) return `${text.slice(0, limit)}…[截断，原始 ${text.length} 字符]`;
+  return text;
+}
+
 // 只传递当前错误协议中的诊断字段，避免函数和 AbortSignal 进入结构化克隆。
 function createErrorSnapshot(error) {
   return {
@@ -91,10 +117,10 @@ function createErrorSnapshot(error) {
     agentModelRetryCount: Number(error?.agentModelRetryCount || 0),
     agentDiagnostics: error?.agentDiagnostics && typeof error.agentDiagnostics === 'object' ? error.agentDiagnostics : {},
     piAssistantError: error?.piAssistantError || null,
-    raw_response_body: error?.raw_response_body,
-    raw_response_payload: error?.raw_response_payload,
-    raw_response_data: error?.raw_response_data,
-    raw_sse_data: error?.raw_sse_data,
+    raw_response_body: toDiagnosticSnippet(error?.raw_response_body),
+    raw_response_payload: toDiagnosticSnippet(error?.raw_response_payload),
+    raw_response_data: toDiagnosticSnippet(error?.raw_response_data),
+    raw_sse_data: toDiagnosticSnippet(error?.raw_sse_data),
     loopbackAttempts: Array.isArray(error?.loopbackAttempts) ? error.loopbackAttempts : [],
     illustrationGeneration: error?.illustrationGeneration || null,
   };
@@ -136,13 +162,36 @@ function createAgentErrorReporter({ app, configStore, licenseService }) {
     });
   }
 
+  // 同一错误签名的近期上报标记（内存级，进程重启后重置，可接受）。
+  const recentReportSignatures = new Map();
+
+  function isDuplicateReport(error, version) {
+    const signature = [
+      version,
+      error?.name || '',
+      error?.code || '',
+      String(error?.message || '').slice(0, 200),
+    ].join('|');
+    const now = Date.now();
+    for (const [key, timestamp] of recentReportSignatures) {
+      if (now - timestamp > REPORT_DEDUP_WINDOW_MS) recentReportSignatures.delete(key);
+    }
+    if (recentReportSignatures.size >= REPORT_DEDUP_MAX_ENTRIES) recentReportSignatures.clear();
+    const lastAt = recentReportSignatures.get(signature);
+    if (lastAt && now - lastAt < REPORT_DEDUP_WINDOW_MS) return true;
+    recentReportSignatures.set(signature, now);
+    return false;
+  }
+
   async function dispatch({ payload, error, userTaskContext }) {
     const config = configStore.load();
     const license = normalizeLicenseEnvelope(licenseService?.getLicenseEnvelope?.());
     const version = typeof app?.getVersion === 'function' ? app.getVersion() : '';
     if (closing || !license || !version || !config.analytics_client_id || !config.analytics_created_at) return;
+    // 去重放在预检之后：预检失败（网络抖动）不占用去重窗口，同一错误可稍后重试；
+    // 预检成功再记录签名，避免“标记已报但实际没报”丢失首次诊断包。
     if (!await canUploadCurrentVersion(version)) return;
-    if (closing) return;
+    if (closing || isDuplicateReport(error, version)) return;
 
     return startProcess({
       schemaVersion: REPORT_SCHEMA_VERSION,

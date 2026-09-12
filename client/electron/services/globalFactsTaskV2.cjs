@@ -43,7 +43,8 @@ function readJson(content, label) {
   try {
     return JSON.parse(String(content || '').trim());
   } catch (error) {
-    throw new Error(`${label}不是合法 JSON：${error?.message || String(error)}`);
+    // 不带解析器细节：该文案同时进入自动修复提示词与用户可见错误
+    throw new Error(`${label}不是合法 JSON，请修正为纯 JSON 后重写该文件`);
   }
 }
 
@@ -243,7 +244,9 @@ async function runGlobalFactsTaskV2({
 }) {
   let logs = ['开始生成全局事实变量。'];
   let currentProgress = 5;
-  let task = checkpointTask({ status: 'running', progress: currentProgress, logs }, { globalFacts: [] }).task;
+  // 不在启动时清空既有全局事实：成功后由终态 checkpoint 原子换入，
+  // 失败/取消时旧事实（含人工编辑）保留，可重试或手动修正。
+  let task = checkpointTask({ status: 'running', progress: currentProgress, logs }).task;
 
   function publish(message, progress, statsPatch = {}) {
     const text = String(message || '').trim();
@@ -275,10 +278,14 @@ async function runGlobalFactsTaskV2({
     task = checkpoint.task;
   }
 
+  let agentActivityCount = 0;
   function publishAgentActivity(event = {}) {
     const title = formatProgressTitle(event.message);
     if (!title || event.visible === false) return;
-    publish(title, Math.max(currentProgress, 20));
+    agentActivityCount += 1;
+    // 随 Agent 活动节流递增（20%→80% 封顶）：长任务期间进度条可区分"在干活"与"卡住"，
+    // 成功仍跳 95、失败停在 99 以下，与既有终态进度口径一致。
+    publish(title, Math.min(80, 20 + agentActivityCount * 2));
   }
 
   function syncAgentCheckpoint(checkpoint) {
@@ -405,7 +412,8 @@ async function runGlobalFactsTaskV2({
     json_validation_schemas: {
       [GLOBAL_FACTS_OUTPUT_FILE]: GLOBAL_FACTS_JSON_SCHEMA,
     },
-    max_retries: 0,
+    max_retries: 1,
+    validateOutput: validateGlobalFactsOutput,
     onActivity: publishAgentActivity,
     onCheckpoint: syncAgentCheckpoint,
   });
@@ -420,13 +428,31 @@ async function runGlobalFactsTaskV2({
     { globalFacts: normalized.groups },
   );
   task = finalCheckpoint.task;
-  agentService.updatePersistentTask(GLOBAL_FACTS_AGENT_TASK_KEY, {
-    status: 'success',
-    phase: 'completed',
-    agent_connection: 'idle',
-    error: null,
-    completed_at: new Date().toISOString(),
-  });
+  // 事实与 success 终态已落库：辅助的持久 Agent 状态写入失败只记日志，
+  // 不得让 runner 以 reject 收尾把已成功的任务降级为 error。
+  try {
+    agentService.updatePersistentTask(GLOBAL_FACTS_AGENT_TASK_KEY, {
+      status: 'success',
+      phase: 'completed',
+      agent_connection: 'idle',
+      error: null,
+      completed_at: new Date().toISOString(),
+    });
+  } catch (agentStateError) {
+    console.error('[global-facts] 更新持久 Agent 任务状态失败', agentStateError);
+  }
+}
+
+// Agent 运行结束后的程序校验：JSON 可解析且归一化后存在可用大项。
+// 通过 piRuntimeService 的 validateOutput 前移执行——校验失败会触发一次自动修复
+// （buildRetryPrompt 携带本错误提示），仍失败则 runTask 以 failed 口径上报指标并
+// 触发诊断上报，避免"agent 记 success、父任务记失败"的统计口径断档。
+// 返回 JSON 可序列化值（会写入任务结果文件）。
+function validateGlobalFactsOutput(candidate = {}) {
+  const generated = readJson(candidate?.output_content, GLOBAL_FACTS_OUTPUT_FILE);
+  const normalized = normalizeGlobalFactsResponse(generated);
+  validateGlobalFactsResponse(normalized);
+  return { groupsCount: normalized.groups.length };
 }
 
 module.exports = {
@@ -435,4 +461,5 @@ module.exports = {
   readJson,
   formatProgressTitle,
   runGlobalFactsTaskV2,
+  validateGlobalFactsOutput,
 };

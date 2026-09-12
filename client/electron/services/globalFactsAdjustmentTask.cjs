@@ -4,6 +4,7 @@ const {
   GLOBAL_FACTS_JSON_SCHEMA,
   readJson,
   formatProgressTitle,
+  validateGlobalFactsOutput,
 } = require('./globalFactsTaskV2.cjs');
 const {
   normalizeGlobalFactsResponse,
@@ -59,10 +60,13 @@ async function runGlobalFactsAdjustmentTask({ agentService, workspaceStore, upda
     task = updateTask({ status: 'running', progress: currentProgress, logs });
   }
 
+  let agentActivityCount = 0;
   function publishAgentActivity(event = {}) {
     const title = formatProgressTitle(event.message);
     if (!title || event.visible === false) return;
-    publish(title, Math.max(currentProgress, 20));
+    agentActivityCount += 1;
+    // 与生成任务同口径：随活动节流递增，长任务期间进度条有信息量
+    publish(title, Math.min(80, 20 + agentActivityCount * 2));
   }
 
   // 持久任务的 run_id 与当前业务任务对齐后才能 resume 同一 Session。
@@ -90,7 +94,8 @@ async function runGlobalFactsAdjustmentTask({ agentService, workspaceStore, upda
     },
     initial_stage: 'global-facts-adjustment',
     json_validation_schemas: { [GLOBAL_FACTS_OUTPUT_FILE]: GLOBAL_FACTS_JSON_SCHEMA },
-    max_retries: 0,
+    max_retries: 1,
+    validateOutput: validateGlobalFactsOutput,
     onActivity: publishAgentActivity,
   });
 
@@ -118,13 +123,19 @@ async function runGlobalFactsAdjustmentTask({ agentService, workspaceStore, upda
     contentIllustrationPlan: undefined,
     contentGenerationRuntime: undefined,
   });
-  agentService.updatePersistentTask(GLOBAL_FACTS_AGENT_TASK_KEY, {
-    status: 'success',
-    phase: 'completed',
-    agent_connection: 'idle',
-    error: null,
-    completed_at: new Date().toISOString(),
-  });
+  // 事实与 success 终态已落库：辅助的持久 Agent 状态写入失败只记日志，
+  // 不得让 runner 以 reject 收尾把已成功的任务降级为 error。
+  try {
+    agentService.updatePersistentTask(GLOBAL_FACTS_AGENT_TASK_KEY, {
+      status: 'success',
+      phase: 'completed',
+      agent_connection: 'idle',
+      error: null,
+      completed_at: new Date().toISOString(),
+    });
+  } catch (agentStateError) {
+    console.error('[global-facts] 更新持久 Agent 任务状态失败', agentStateError);
+  }
 }
 
 module.exports = { runGlobalFactsAdjustmentTask };

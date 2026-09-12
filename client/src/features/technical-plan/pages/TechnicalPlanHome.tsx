@@ -1465,6 +1465,9 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
           focusGroupRequest={globalFactsFocusRequest}
           onGlobalFactsSaved={saveGlobalFacts}
           onGlobalFactsConfigChange={saveGlobalFactsConfig}
+          onCancel={async (taskType) => {
+            await window.yibiao!.tasks.cancelTechnicalPlanTask({ type: taskType });
+          }}
         />
       )}
       {state.step === 'content-edit' && (

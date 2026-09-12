@@ -719,6 +719,8 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
       queueScopeId,
       signal: abortController.signal,
       pauseRequested: false,
+      // 重置/清空路径置 false：旧计划状态即将整体删除，迟到终态不得再落库（幽灵行）。
+      persistTerminal: true,
       outlineSelectionWaiter: null,
       outlineSelectionResult: null,
       outlineSelectionAutoConfirmationId: null,
@@ -758,9 +760,10 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
         this.registerOutlineSelectionAutoConfirmation?.();
         return promise;
       },
-      cancel(reason = '后台任务已取消') {
+      cancel(reason = '后台任务已取消', options = {}) {
         const error = new Error(reason);
         error.code = 'TASK_CANCELLED';
+        this.persistTerminal = options.persistTerminal !== false;
         this.outlineSelectionWaiter?.reject?.(error);
         this.outlineSelectionWaiter = null;
         autoConfirmationService.unregister(this.outlineSelectionAutoConfirmationId);
@@ -825,6 +828,12 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
     // 没有这一步，持久化状态会停在取消前的 "running"（僵尸任务）：
     // 页面步骤锁死、桌宠 chat 的 pending 永不复位，重启后才被恢复逻辑误标为"应用关闭"。
     const settleCancelledTask = (error) => {
+      // 清空路径已接管终态：任务行会被整体删除，落库反而会在新计划里写出幽灵任务行，
+      // 推事件则覆盖已清空的界面状态——两件事都由清空流程自己的状态推送完成。
+      if (taskControl.persistTerminal === false) {
+        console.info('[task] 清空路径取消，跳过终态落库与事件推送', type);
+        return;
+      }
       const reason = taskControl.signal.reason;
       const source = reason instanceof Error ? reason : (error instanceof Error ? error : null);
       const message = source?.message || '后台任务已取消';
@@ -991,7 +1000,10 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
   }
 
   // 取消技术方案任务并等待退出，避免清空下游后旧任务继续提交 checkpoint。
-  async function cancelTechnicalPlanTasks(reason, taskTypes) {
+  // options.persistTerminal=false 仅限"任务行将被整体删除"的清空路径（重置）：
+  // 迟到的终态落库会在新计划里写出幽灵任务行；文档替换路径（重传招标/原方案）
+  // 不删任务行，迟到终态正是防僵尸行所必需，保持默认落库。
+  async function cancelTechnicalPlanTasks(reason, taskTypes, options) {
     const typeFilter = Array.isArray(taskTypes) && taskTypes.length ? new Set(taskTypes) : null;
     const controls = [];
     for (const [type, task] of activeTasks.entries()) {
@@ -1000,7 +1012,7 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
       if (definition.group !== 'technical-plan' || !isActiveTaskStatus(task.status) || !control?.cancel) continue;
       if (typeFilter && !typeFilter.has(type)) continue;
       controls.push(control);
-      control.cancel(reason);
+      control.cancel(reason, options);
     }
     await waitForSettlementWithTimeout(controls);
   }
@@ -1222,6 +1234,14 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
     }
 
     const message = '上次全局事实 AI 调整未完成，请重新发送调整要求。';
+    // 调整与生成共用同一持久 Agent 会话，恢复口径与生成任务一致。
+    try {
+      agentService.updatePersistentTask(GLOBAL_FACTS_AGENT_TASK_KEY, {
+        status: 'interrupted',
+        agent_connection: 'idle',
+        error: message,
+      });
+    } catch {}
     const recoveredTask = {
       ...adjustmentTask,
       status: 'error',
@@ -1315,10 +1335,21 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
     }
 
     const message = '上次全局事实设定未完成，请重新解析';
+    // 与目录任务恢复口径一致：持久 Agent 任务同步标 interrupted，
+    // 避免强杀后其状态文件停在 running 与业务任务终态矛盾。
+    try {
+      agentService.updatePersistentTask(GLOBAL_FACTS_AGENT_TASK_KEY, {
+        status: 'interrupted',
+        agent_connection: 'idle',
+        error: message,
+      });
+    } catch {}
     const recoveredTask = {
       ...globalFactsTask,
       status: 'error',
-      progress: 100,
+      // 与目录 AI 调整分支口径一致：error 态进度封顶 99，避免"失败"却显示 100%
+      progress: Math.max(0, Math.min(99, Number(globalFactsTask.progress || 0) || 0)),
+      pause_requested: false,
       error: message,
       logs: [...(Array.isArray(globalFactsTask.logs) ? globalFactsTask.logs : []), message],
       updated_at: now(),
@@ -1538,9 +1569,10 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
       });
     },
     startGlobalFactsGeneration(payload) {
+      // 重新解析不在启动时清空既有全局事实（含人工编辑）：成功后由成功 checkpoint
+      // 原子换入新事实，失败/取消时旧事实原样保留，避免一次失败即永久丢失。
       return startManagedTask('global-facts-generation', payload, runGlobalFactsTaskV2, {
         invalidateContentGeneration: true,
-        globalFacts: [],
         globalFactsAdjustmentTask: undefined,
         contentGenerationTask: undefined,
         contentGenerationSections: {},
@@ -1689,6 +1721,22 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
       control.cancel('已取消该任务');
       return { success: true, task_id: task.task_id };
     },
+    // 用户可触达的取消入口（technical-plan 组）：与可研组同模式。
+    // 终态由 startManagedTask 的取消兜底异步写入并推送事件，这里立即返回。
+    cancelTechnicalPlanTask(payload = {}) {
+      const type = String(payload?.type || '');
+      const definition = getTaskDefinition(type);
+      if (!definition || definition.group !== 'technical-plan') {
+        throw new Error('未知任务类型');
+      }
+      const task = activeTasks.get(type);
+      const control = activeTaskControls.get(type);
+      if (!task || !isActiveTaskStatus(task.status) || !control?.cancel) {
+        throw new Error('当前任务未在运行');
+      }
+      control.cancel('已取消该任务');
+      return { success: true, task_id: task.task_id };
+    },
     confirmOutlineSelection(payload) {
       const control = activeTaskControls.get('outline-generation');
       if (!control?.confirmOutlineSelection) throw new Error('当前没有等待确认的一级目录任务');
@@ -1700,7 +1748,8 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
       return control.suppressOutlineSelectionAutoConfirmation(payload);
     },
     async resetTechnicalPlan() {
-      await cancelTechnicalPlanTasks('技术方案已重置，后台任务已取消');
+      // 重置会 DELETE 全部任务行：取消终态不落地，防止结算超时后幽灵任务行写回新计划
+      await cancelTechnicalPlanTasks('技术方案已重置，后台任务已取消', undefined, { persistTerminal: false });
       // 空闲常驻的 openxml 助手不在任务取消范围内,重置前显式关掉,确保没有进程握着招标原件
       await openXmlHelperService.close?.();
       return technicalPlanStore.clearTechnicalPlan();

@@ -741,6 +741,7 @@ export interface YibiaoBridge {
     pauseFeasibilityContent: () => Promise<unknown>;
     startFeasibilityHumanWriting: (payload?: unknown) => Promise<unknown>;
     cancelFeasibilityTask: (payload: { type: string }) => Promise<{ success: boolean; task_id: string }>;
+    cancelTechnicalPlanTask: (payload: { type: string }) => Promise<{ success: boolean; task_id: string }>;
     getActiveTasks: () => Promise<TaskEventTask[]>;
     onTaskEvent: <TState = unknown, TRejectionCheckState = unknown, TDuplicateCheckState = unknown>(callback: (event: TaskEvent<TState, TRejectionCheckState, TDuplicateCheckState>) => void) => () => void;
   };

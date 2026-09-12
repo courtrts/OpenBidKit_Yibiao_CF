@@ -13,6 +13,7 @@ interface GlobalFactsPageProps {
   focusGroupRequest?: { groupId: string } | null;
   onGlobalFactsSaved: (globalFacts: GlobalFactGroupState[]) => Promise<void> | void;
   onGlobalFactsConfigChange: (globalFactsMode: GlobalFactsMode) => Promise<void> | void;
+  onCancel: (taskType: string) => Promise<void>;
 }
 
 const statusLabels: Record<string, string> = {
@@ -71,6 +72,7 @@ function GlobalFactsPage({
   focusGroupRequest,
   onGlobalFactsSaved,
   onGlobalFactsConfigChange,
+  onCancel,
 }: GlobalFactsPageProps) {
   const { showToast } = useToast();
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(globalFacts[0]?.id || null);
@@ -85,6 +87,7 @@ function GlobalFactsPage({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [draftGlobalFactsMode, setDraftGlobalFactsMode] = useState<GlobalFactsMode>(() => normalizeGlobalFactsMode(globalFactsMode));
   const [progressCollapsed, setProgressCollapsed] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const hasOutline = Boolean(outlineData?.outline?.length);
   const running = starting || task?.status === 'running';
   const mutationLocked = running || aiAdjustmentRunning;
@@ -125,6 +128,19 @@ function GlobalFactsPage({
       return nextMode;
     } finally {
       setSavingConfig(false);
+    }
+  };
+
+  const handleCancelTask = async () => {
+    if (!onCancel || cancelling || task?.status !== 'running') return;
+    setCancelling(true);
+    try {
+      await onCancel('global-facts-generation');
+      showToast('已发送取消请求，正在停止任务…', 'info');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '取消任务失败，请重试', 'error');
+    } finally {
+      setCancelling(false);
     }
   };
 
@@ -312,7 +328,20 @@ function GlobalFactsPage({
         <aside className="global-facts-panel" aria-label="全局事实大项列表">
           <div className="analysis-result-head global-facts-panel-head">
             <strong>事实大项</strong>
-            <span className={`content-status-badge is-${statusKey}`}>{statusLabels[statusKey]}</span>
+            <div className="global-facts-head-actions">
+              <span className={`content-status-badge is-${statusKey}`}>{statusLabels[statusKey]}</span>
+              {task?.status === 'running' && (
+                <button
+                  type="button"
+                  className="global-facts-cancel-action"
+                  onClick={() => { void handleCancelTask(); }}
+                  disabled={cancelling}
+                  aria-label="取消当前全局事实任务"
+                >
+                  {cancelling ? '取消中…' : '取消任务'}
+                </button>
+              )}
+            </div>
           </div>
           <div className={`content-outline-stats global-facts-progress${progressCollapsed ? ' is-collapsed' : ''}`}>
             <button type="button" onClick={() => setProgressCollapsed((prev) => !prev)} aria-expanded={!progressCollapsed}>

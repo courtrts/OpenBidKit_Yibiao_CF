@@ -24,6 +24,7 @@ import {
   catchUpIncompleteRollups,
   refreshOverviewAiTotals,
   rollupYesterdayForAllProjects,
+  tryAcquireScheduledLock,
 } from './services/analyticsStatsStore.js';
 
 const routes = new Map([
@@ -88,24 +89,40 @@ export default {
   },
 
   // 免费套餐适配：单一 cron（0 17 * * * UTC = 北京时间 01:00）顺序执行全部每日任务。
-  // 各步骤独立 try/catch：某一步失败不阻塞后续步骤；汇总阶段本身幂等
-  // （stats_rollup_runs / stats_rollup_stages 到分块级别的成功标记），
-  // 中断的部分由 catchUpIncompleteRollups 在当天/次日补跑，不会重复累计。
+  // 各步骤独立 try/catch：某一步失败不阻塞后续步骤；汇总阶段对“串行重跑”幂等
+  // （stats_rollup_runs / stats_rollup_stages 到分块级别的成功标记），中断的部分由
+  // catchUpIncompleteRollups 补跑。但部署切换窗口 Cloudflare 可能把同一次 scheduled
+  // 事件投递给新旧两个版本，并发双跑会在 stage marker 提交前各读一次“未完成”而把
+  // total_events 等累计计数器加两次——故 rollup 两步用 stats_scheduled_locks 命名租约
+  // 互斥（原子“插入或过期抢占”，30 分钟自动过期，抢不到的一方整步跳过）。
   // 注意：模型目录同步（syncModelInfoCache）不放在 cron 里——models.dev/api.json
   // 约 4.5MB，单次 JSON.parse 就要数十毫秒 CPU，超出免费套餐每次调用 10ms 的
   // CPU 预算。免费部署下 /model-info 返回 503、客户端回退手动录入；升级付费后
   // 可在 dashboard 手动同步（POST /api/model-info-cache）或恢复原 6-cron 配置。
   async scheduled(event, env) {
+    let rollupAllowed = true;
     try {
-      await rollupYesterdayForAllProjects(env);
+      rollupAllowed = await tryAcquireScheduledLock(env);
     } catch (error) {
-      console.error('[analytics] yesterday rollup failed, catch-up will retry', error?.message || String(error));
+      // 租约设施本身故障（D1 抖动）时宁可放行：幂等 marker 仍是串行场景的底线，
+      // 只有“并发双跑”这一窄场景会失去保护，不可因锁故障让整个夜间汇总停摆。
+      console.error('[analytics] scheduled lock acquire failed, run without lock', error?.message || String(error));
     }
-    try {
-      await catchUpIncompleteRollups(env);
-    } catch (error) {
-      console.error('[analytics] catch-up rollup failed', error?.message || String(error));
+    if (rollupAllowed) {
+      try {
+        await rollupYesterdayForAllProjects(env);
+      } catch (error) {
+        console.error('[analytics] yesterday rollup failed, catch-up will retry', error?.message || String(error));
+      }
+      try {
+        await catchUpIncompleteRollups(env);
+      } catch (error) {
+        console.error('[analytics] catch-up rollup failed', error?.message || String(error));
+      }
+    } else {
+      console.warn('[analytics] scheduled rollup skipped: another invocation holds the daily lock');
     }
+    // 以下两步天然是覆盖/DELETE 语义（幂等），双跑无副作用，不需要锁。
     try {
       await refreshOverviewAiTotals(env);
     } catch (error) {

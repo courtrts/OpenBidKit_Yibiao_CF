@@ -16,6 +16,10 @@ export const AGENT_RUNTIME_KIND_PATTERN = /^[a-z0-9][a-z0-9._-]{0,39}$/;
 export const PROJECT_NAME_PATTERN = /^[a-zA-Z0-9._-]{1,80}$/;
 // 客户端上报版本号必须符合“2.x.x”格式，其余一律视为异常版本号，在 /track 静默丢弃。
 export const VERSION_FORMAT_PATTERN = /^2\.\d+\.\d+$/;
+// 免费套餐 D1 写预算（约 10 万/天）保护：单项目滚动 24 小时内允许落库的新客户端上限。
+// /track 无鉴权，脚本批量注册唯一 client_id 可耗尽 D1 写配额并让次日 rollup 放大扫描；
+// 超限后停止实时客户端落库（AE 事件点不受影响），真实增长远低于该上限（数十/天）。
+export const TRACK_NEW_CLIENTS_CAP_PER_PROJECT_24H = 1000;
 export const NOTICE_KEY_PREFIX = 'project_notice:';
 export const LICENSE_CONFIG_KEY_PREFIX = 'project_license_config:';
 export const NOTICE_TITLE_MAX_LENGTH = 120;

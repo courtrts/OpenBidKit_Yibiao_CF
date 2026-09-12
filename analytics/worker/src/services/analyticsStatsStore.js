@@ -8,6 +8,7 @@ import {
   DATASET,
   MODEL_USAGE_FIELDS,
   RAW_DATASET,
+  TRACK_NEW_CLIENTS_CAP_PER_PROJECT_24H,
 } from '../constants.js';
 import {
   businessDateRangeCondition,
@@ -266,7 +267,23 @@ export async function recordTrackClient(env, event) {
   const db = requireStatsDb(env);
   const updatedAt = nowText();
 
+  let shouldInsertRow = shouldInsert;
   if (shouldInsert) {
+    // D1 写预算闸门：单项目近 24 小时新客户端达上限（脚本批量注册唯一 client_id）
+    // 时停止实时客户端落库；AE 事件点在上游已写、事件口径不削弱，仅客户端身份表停止增长。
+    const cutoff = formatBusinessDateTime(new Date(Date.now() - 86400000));
+    const countRow = await first(db, `
+      SELECT COUNT(*) AS count
+      FROM stats_clients
+      WHERE project_name = ? AND created_at >= ?
+    `, [event.projectName, cutoff]);
+    if (number(countRow?.count) >= TRACK_NEW_CLIENTS_CAP_PER_PROJECT_24H) {
+      console.warn(`[analytics] new-client cap (${TRACK_NEW_CLIENTS_CAP_PER_PROJECT_24H}/24h) hit for ${event.projectName}, realtime client insert skipped`);
+      shouldInsertRow = false;
+    }
+  }
+
+  if (shouldInsertRow) {
     const result = await run(db, `
       INSERT INTO stats_clients (
         project_name, client_id, first_seen_at, first_seen_date, active_days,
@@ -959,6 +976,7 @@ export async function queryStatsTraffic(env, projectName, range) {
       FROM ${DATASET}
       WHERE blob1 = ${project}
         AND blob2 = 'page_view'
+        AND blob3 != ''
         AND ${rangeWhere}
       GROUP BY page
       ORDER BY count DESC
@@ -2665,6 +2683,35 @@ async function runRollupStageForDate(env, stage, activityDate, options = {}) {
   }
 }
 
+// 每日 cron 命名租约：部署切换窗口同一次 scheduled 事件可能被重复投递给新旧两个版本，
+// 并发双跑会在对方 stage marker 提交前各自读到“分块未完成”，把 total_events 等累计计数器加两次
+// （分块级幂等标记只防串行重跑）。scheduled() 入口原子抢占（插入或接管过期租约），
+// 失败方跳过 rollup 步骤；租约不显式释放、靠过期自然失效，宕机不会阻塞次日接管。
+const SCHEDULED_LOCK_NAME = 'daily-rollup';
+const SCHEDULED_LOCK_STALE_MS = 30 * 60 * 1000;
+
+export async function tryAcquireScheduledLock(env) {
+  const db = requireStatsDb(env);
+  const token = `${nowText()}:${typeof globalThis.crypto?.randomUUID === 'function'
+    ? globalThis.crypto.randomUUID()
+    : Math.random().toString(36).slice(2)}`;
+  const staleBefore = formatBusinessDateTime(new Date(Date.now() - SCHEDULED_LOCK_STALE_MS));
+  await run(db, `
+    INSERT INTO stats_scheduled_locks (lock_name, acquired_at, acquired_token)
+    VALUES (?, ?, ?)
+    ON CONFLICT(lock_name) DO UPDATE SET
+      acquired_at = excluded.acquired_at,
+      acquired_token = excluded.acquired_token
+    WHERE stats_scheduled_locks.acquired_at < ?
+  `, [SCHEDULED_LOCK_NAME, token, token, staleBefore]);
+  const row = await first(db, `
+    SELECT acquired_token AS token
+    FROM stats_scheduled_locks
+    WHERE lock_name = ?
+  `, [SCHEDULED_LOCK_NAME]);
+  return row?.token === token;
+}
+
 export async function rollupStatsDay(env, projectName, activityDate, options = {}) {
   const db = requireStatsDb(env);
   const normalizedProjectName = normalizeProjectName(projectName);
@@ -2764,7 +2811,14 @@ export async function rollupYesterdayForAllProjects(env) {
 // 次日不会再自动重跑旧的一天（次日处理新的“昨日”）。这里扫描最近 7 个业务日
 // 的 stats_rollup_runs，把 status != 'success' 的项目交给 rollupStatsDay 补跑；
 // 各阶段/分块均有 success 标记（stats_rollup_stages），补跑不会重复累计。
-export async function catchUpIncompleteRollups(env, days = 7) {
+// D1 小表 stats_rollup_runs 无保留期：对“不完整 run”（有行但未 success）可扫描 90 天
+// 覆盖长停摆（原 7 天窗口会让超期缺口日的 stats_client_activity 永久缺失，留存快照连带漏判）；
+// 对“零行日”重跑 discovery 仅在 AE 数据保留窗口内有意义（超出即数据过期不会再来），
+// 且上线前的零数据日每晚都重跑 discovery 会消耗 CPU 预算，故对 discovery 重跑设数量上限。
+const CATCHUP_DISCOVERY_MAX_BACK_DAYS = 60;
+const CATCHUP_DISCOVERY_MAX_PER_NIGHT = 5;
+
+export async function catchUpIncompleteRollups(env, days = 90) {
   const db = requireStatsDb(env);
   const results = [];
   // 单次 cron 的补跑总量预算：免费套餐 CPU 上限会在某个“项目-日”处掐断整个调用，
@@ -2772,6 +2826,7 @@ export async function catchUpIncompleteRollups(env, days = 7) {
   // 有预算则其余“项目-日”顺延到后续 cron（幂等标记保证不丢不重）。
   const MAX_CATCHUP_PROJECT_DAYS = 12;
   let projectDaysBudget = MAX_CATCHUP_PROJECT_DAYS;
+  let discoveryReruns = 0;
   for (let back = days; back >= 1; back -= 1) {
     if (projectDaysBudget <= 0) {
       console.warn(`[analytics] catch-up budget exhausted (${MAX_CATCHUP_PROJECT_DAYS} project-days), remaining days deferred`);
@@ -2787,6 +2842,12 @@ export async function catchUpIncompleteRollups(env, days = 7) {
       WHERE activity_date = ?
     `, [activityDate]);
     if (!rowCount?.count) {
+      if (back > CATCHUP_DISCOVERY_MAX_BACK_DAYS || discoveryReruns >= CATCHUP_DISCOVERY_MAX_PER_NIGHT) {
+        // 超出 AE 数据保留窗口或当晚 discovery 预算：该日即使有缺口也无法从 AE 恢复，
+        // 跳过（不完整 run 的补跑不受此限，仍由下方扫描处理）。
+        continue;
+      }
+      discoveryReruns += 1;
       let projectNames = [];
       try {
         const discoverResult = await runRollupStageForDate(env, 'discover', activityDate);

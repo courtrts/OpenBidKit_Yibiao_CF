@@ -1,4 +1,5 @@
 import { assertReady, getEncodedProjectAndDays, loadProjectOptions, requestJson, saveSettings } from '../api.js';
+import { eventLabels, pageLabels } from '../labels.js';
 import { renderTable, updateLatestPager } from '../render.js';
 import { appState, state } from '../state.js';
 
@@ -9,6 +10,8 @@ function ensureEventOptions() {
   for (const event of allowedEvents) {
     const option = document.createElement('option');
     option.value = event;
+    // 下拉展示中文标签，value 仍是事件码（与 /api/latest 的 event 参数口径一致）
+    option.textContent = eventLabels[event] || event;
     state.latestEventOptions.appendChild(option);
   }
 }
@@ -32,12 +35,19 @@ export async function loadLatest(options = {}) {
   appState.latestPage = Number(latest.page || appState.latestPage);
   updateLatestPager();
 
-  const events = [...(latest.events || [])].sort((left, right) => Date.parse(right.timestamp || '') - Date.parse(left.timestamp || ''));
+  const events = (latest.events || [])
+    .map((row) => ({
+      ...row,
+      // 未知事件/页面回退原始值，不丢排查信息
+      eventLabel: eventLabels[row.event] || row.event || '-',
+      pageLabel: pageLabels[row.page] || row.page || '-',
+    }))
+    .sort((left, right) => Date.parse(right.timestamp || '') - Date.parse(left.timestamp || ''));
 
   renderTable(state.latestTable, events, [
     { key: 'timestamp', label: '时间' },
-    { key: 'event', label: '事件', code: true },
-    { key: 'page', label: '页面', code: true },
+    { key: 'eventLabel', label: '事件' },
+    { key: 'pageLabel', label: '页面' },
     { key: 'version', label: '版本', code: true },
     { key: 'platform', label: '平台' },
     { key: 'arch', label: '架构' },

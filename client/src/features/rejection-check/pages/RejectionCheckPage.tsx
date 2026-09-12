@@ -142,7 +142,9 @@ function isCheckResultTabEnabled(tabId: RejectionCheckResultTab, options: Reject
 }
 
 function getCheckResultTabProgress(status: RejectionCheckTabStatus, progressMessage?: string) {
-  if (status === 'success' || status === 'error') return 100;
+  if (status === 'success') return 100;
+  // 失败进度封顶 99，与后端终态口径一致，避免“失败”却显示 100%
+  if (status === 'error') return 99;
   if (status !== 'running') return 0;
   if (progressMessage?.includes('第三轮')) return 85;
   if (progressMessage?.includes('校验')) return 78;
@@ -631,6 +633,8 @@ function RejectionCheckPage() {
   const [checkConfigDialogOpen, setCheckConfigDialogOpen] = useState(false);
   const [busy, setBusy] = useState<'technical-plan' | 'tender-upload' | 'bid-upload' | 'remove' | null>(null);
   const [exportingExcel, setExportingExcel] = useState(false);
+  const [cancellingExtractionTask, setCancellingExtractionTask] = useState(false);
+  const [cancellingCheckTask, setCancellingCheckTask] = useState(false);
   const [exportedExcelPath, setExportedExcelPath] = useState('');
   const [analyticsReady, setAnalyticsReady] = useState(false);
   const hydratedRef = useRef(false);
@@ -1087,7 +1091,8 @@ function RejectionCheckPage() {
         tenderSignature: signature,
         updatedAt: new Date().toISOString(),
       });
-      setExtractionTask((prev) => prev ? { ...prev, status: 'error', progress: 100, error: message, logs: [message], updated_at: new Date().toISOString() } : prev);
+      // 失败进度封顶 99，与后端 runner 终态口径一致
+      setExtractionTask((prev) => prev ? { ...prev, status: 'error', progress: 99, error: message, logs: [message], updated_at: new Date().toISOString() } : prev);
       showToast(message, 'error');
     }
   }
@@ -1316,8 +1321,45 @@ function RejectionCheckPage() {
           ? { ...prev, status: 'error', error: message, progressMessage: message, updatedAt: new Date().toISOString() }
           : prev);
       }
-      setCheckTask((prev) => prev ? { ...prev, status: 'error', error: message, progress: 100, updated_at: new Date().toISOString() } : prev);
+      // 失败进度封顶 99，与后端 runner 终态口径一致
+      setCheckTask((prev) => prev ? { ...prev, status: 'error', error: message, progress: 99, updated_at: new Date().toISOString() } : prev);
       showToast(message, 'error');
+    }
+  }
+
+  // 查废组用户取消入口：解析与检查都是长任务，运行中全部操作被锁，
+  // 提供可触达的取消与其他任务组口径一致；终态由任务框架取消兜底异步写入
+  async function cancelExtractionTask() {
+    if (!extractionRunning || cancellingExtractionTask) return;
+    setCancellingExtractionTask(true);
+    try {
+      const canceller = window.yibiao?.tasks.cancelRejectionCheckTask;
+      if (typeof canceller !== 'function') {
+        throw new Error('后台任务接口尚未加载，请重启应用后重试');
+      }
+      await canceller({ type: 'rejection-items-extraction' });
+      showToast('已发送取消请求，正在停止解析…', 'info');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '取消任务失败，请重试', 'error');
+    } finally {
+      setCancellingExtractionTask(false);
+    }
+  }
+
+  async function cancelCheckTask() {
+    if (!checkRunning || cancellingCheckTask) return;
+    setCancellingCheckTask(true);
+    try {
+      const canceller = window.yibiao?.tasks.cancelRejectionCheckTask;
+      if (typeof canceller !== 'function') {
+        throw new Error('后台任务接口尚未加载，请重启应用后重试');
+      }
+      await canceller({ type: 'rejection-check-run' });
+      showToast('已发送取消请求，正在停止检查…', 'info');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '取消任务失败，请重试', 'error');
+    } finally {
+      setCancellingCheckTask(false);
     }
   }
 
@@ -1472,7 +1514,8 @@ function RejectionCheckPage() {
       ? {
           ...prev,
           status: 'error',
-          progress: 100,
+          // 失败进度封顶 99，与后端恢复分支口径一致
+          progress: 99,
           error: '上次解析未完成，请重新解析',
           logs: ['上次解析未完成，请重新解析。'],
           updated_at: new Date().toISOString(),
@@ -1498,7 +1541,8 @@ function RejectionCheckPage() {
       ? {
           ...prev,
           status: 'error',
-          progress: 100,
+          // 失败进度封顶 99，与后端恢复分支口径一致
+          progress: 99,
           error: staleMessage,
           logs: [staleMessage],
           updated_at: new Date().toISOString(),
@@ -2105,6 +2149,18 @@ function RejectionCheckPage() {
             >
               {extractionRunning ? '解析中...' : visibleExtractionContent.trim() ? '重新解析' : '开始解析'}
             </button>
+            {extractionRunning ? (
+              <button
+                type="button"
+                className="secondary-action"
+                onClick={() => void cancelExtractionTask()}
+                disabled={cancellingExtractionTask}
+                aria-label="取消无效与废标项解析任务"
+                title="停止当前正在运行的解析任务"
+              >
+                {cancellingExtractionTask ? '取消中…' : '取消解析'}
+              </button>
+            ) : null}
           </section>
 
           <div className="document-switch-tabs" role="tablist" aria-label="无效与废标项内容切换">
@@ -2216,6 +2272,18 @@ function RejectionCheckPage() {
                 >
                   {checkActionLabel}
                 </button>
+                {checkRunning ? (
+                  <button
+                    type="button"
+                    className="secondary-action"
+                    onClick={() => void cancelCheckTask()}
+                    disabled={cancellingCheckTask}
+                    aria-label="取消废标项检查任务"
+                    title="停止当前正在运行的检查任务（含并行子检查）"
+                  >
+                    {cancellingCheckTask ? '取消中…' : '取消检查'}
+                  </button>
+                ) : null}
               </div>
             </div>
 

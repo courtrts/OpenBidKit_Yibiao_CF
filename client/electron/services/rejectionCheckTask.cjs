@@ -1,5 +1,6 @@
 const crypto = require('node:crypto');
 const { compactLogError, createNoopDeveloperLogger, textMetrics } = require('../utils/developerLog.cjs');
+const { userFacingTaskError } = require('../utils/taskErrorText.cjs');
 const { splitUserTextByContextLimit } = require('../utils/userTextSplitter.cjs');
 const { runInvalidBidAndRejectionItemsExtraction } = require('./bidAnalysisTask.cjs');
 
@@ -1591,14 +1592,16 @@ async function runRejectionItemsExtractionTask({ aiService, workspaceStore, chec
       fileContent: tenderContent,
     });
   } catch (error) {
-    const message = error?.message || '无效与废标项解析失败';
+    // 用户可见消息走统一净化（错误码短句/剥离路径与换行/截断），原始细节保留在开发者日志
+    const message = userFacingTaskError(error, '无效与废标项解析失败');
     developerLogger.write('rejection.extraction.error', {
       tender_signature: tenderSignature,
       error: compactLogError(error),
     });
     extractionState = updateExtractionState(checkpointTask, extractionState, {
       status: 'error',
-      progress: 100,
+      // 失败进度封顶 99：error 终态显示 100% 会被误读为“已完成”
+      progress: 99,
       logs: [`无效与废标项解析失败：${message}`],
       error: message,
     }, {
@@ -1622,7 +1625,8 @@ async function runRejectionItemsExtractionTask({ aiService, workspaceStore, chec
   });
   extractionState = updateExtractionState(checkpointTask, extractionState, {
     status: success ? 'success' : 'error',
-    progress: 100,
+    // 失败终态进度封顶 99（模型未返回内容的失败分支）
+    progress: success ? 100 : 99,
     logs: success ? ['无效与废标项解析完成。'] : ['无效与废标项解析失败：模型未返回解析内容。'],
     error: success ? undefined : '模型未返回解析内容',
   }, {
@@ -1746,7 +1750,8 @@ async function runRejectionCheckTask({ aiService, workspaceStore, updateTask, ch
       return { kind, status: 'success' };
     } catch (error) {
       completed += 1;
-      const message = error.message || `${label}失败`;
+      // 用户可见消息走统一净化；原始细节保留在开发者日志
+      const message = userFacingTaskError(error, `${label}失败`);
       developerLogger.write('rejection.check.stage.error', {
         kind,
         label,
@@ -1785,7 +1790,8 @@ async function runRejectionCheckTask({ aiService, workspaceStore, updateTask, ch
   const failed = results.filter((item) => item.status === 'error');
   updateCheckWorkspace(updateTask, checkpointTask, {
     status: failed.length ? 'error' : 'success',
-    progress: 100,
+    // 失败终态进度封顶 99，成功才显示 100%
+    progress: failed.length ? 99 : 100,
     logs: failed.length ? [`检查完成，${failed.length} 个任务失败。`] : ['检查完成。'],
     error: failed.length ? `${failed.length} 个检查任务失败` : undefined,
   }, {}, true);

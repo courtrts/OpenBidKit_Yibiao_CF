@@ -1376,7 +1376,8 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
       partial.extractionTask = {
         ...state.extractionTask,
         status: 'error',
-        progress: 100,
+        // 与 technical-plan 恢复分支口径一致：error 态进度封顶 99
+        progress: Math.max(0, Math.min(99, Number(state.extractionTask.progress || 0) || 0)),
         error: staleExtractionMessage,
         logs: [staleExtractionMessage],
         updated_at: now(),
@@ -1393,7 +1394,8 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
       partial.checkTask = {
         ...state.checkTask,
         status: 'error',
-        progress: 100,
+        // 与解析恢复分支同口径：error 态进度封顶 99
+        progress: Math.max(0, Math.min(99, Number(state.checkTask.progress || 0) || 0)),
         error: staleCheckMessage,
         logs: [staleCheckMessage],
         updated_at: now(),
@@ -1743,6 +1745,22 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
       const type = String(payload?.type || '');
       const definition = getTaskDefinition(type);
       if (!definition || definition.group !== 'technical-plan') {
+        throw new Error('未知任务类型');
+      }
+      const task = activeTasks.get(type);
+      const control = activeTaskControls.get(type);
+      if (!task || !isActiveTaskStatus(task.status) || !control?.cancel) {
+        throw new Error('当前任务未在运行');
+      }
+      control.cancel('已取消该任务');
+      return { success: true, task_id: task.task_id };
+    },
+    // 用户可触达的取消入口（rejection-check 组）：与可研/技术方案组同模式，补齐查废组缺口。
+    // 终态由 startManagedTask 的取消兜底异步写入并推送事件，这里立即返回。
+    cancelRejectionCheckTask(payload = {}) {
+      const type = String(payload?.type || '');
+      const definition = getTaskDefinition(type);
+      if (!definition || definition.group !== 'rejection-check') {
         throw new Error('未知任务类型');
       }
       const task = activeTasks.get(type);

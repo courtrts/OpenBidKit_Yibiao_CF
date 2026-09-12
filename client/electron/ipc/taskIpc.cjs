@@ -41,6 +41,10 @@ function registerTaskIpc({ taskService }) {
     taskService.subscribe(event.sender);
     return taskService.startRejectionCheck(payload);
   });
+  ipcMain.handle('tasks:cancel-rejection-check-task', (event, payload) => {
+    taskService.subscribe(event.sender);
+    return taskService.cancelRejectionCheckTask(payload);
+  });
   ipcMain.handle('tasks:start-duplicate-analysis', (event, payload) => {
     taskService.subscribe(event.sender);
     return taskService.startDuplicateAnalysis(payload);

@@ -264,6 +264,7 @@ const bridge = {
     startFeasibilityHumanWriting: (payload) => invoke('tasks:start-feasibility-human-writing', payload),
     cancelFeasibilityTask: (payload) => invoke('tasks:cancel-feasibility-task', payload),
     cancelTechnicalPlanTask: (payload) => invoke('tasks:cancel-technical-plan-task', payload),
+    cancelRejectionCheckTask: (payload) => invoke('tasks:cancel-rejection-check-task', payload),
     getActiveTasks: () => invoke('tasks:get-active'),
     onTaskEvent: (callback) => {
       ipcRenderer.send('tasks:subscribe');

@@ -376,6 +376,7 @@ function OutlineEditPage({
   const [exportFormat, setExportFormat] = useState<ExportFormatConfig>(DEFAULT_EXPORT_FORMAT);
   const [sortDirty, setSortDirty] = useState(false);
   const [savingSort, setSavingSort] = useState(false);
+  const [savingOutlineItem, setSavingOutlineItem] = useState(false);
   const [selectionDialogOpen, setSelectionDialogOpen] = useState(false);
   const [savingOutlineSelection, setSavingOutlineSelection] = useState(false);
   const [draggingItemId, setDraggingItemId] = useState<string | null>(null);
@@ -395,7 +396,7 @@ function OutlineEditPage({
   const isExpansionWorkflow = workflowKind === 'existing-plan-expansion';
   const knowledgePickingDisabled = generating;
   const contentMutationLocked = contentTaskStatus === 'running' || contentTaskStatus === 'pausing' || contentTaskStatus === 'paused';
-  const outlineMutationLocked = generating || contentMutationLocked || savingSort || aiAdjustmentRunning;
+  const outlineMutationLocked = generating || contentMutationLocked || savingSort || savingOutlineItem || aiAdjustmentRunning;
   const progressLogs = task?.logs || [];
   const latestLog = progressLogs[progressLogs.length - 1];
   const progress = generating
@@ -462,6 +463,8 @@ function OutlineEditPage({
         return next.size || sorting ? next : collectRootIds(activeOutlineData.outline);
       });
       setSelectedItemId((prev) => (prev && validIds.has(prev) ? prev : activeOutlineData.outline[0]?.id || null));
+      // 目录项被重排或整树替换后，编辑态指向的编号可能已对应另一个章节，失效即清掉草稿。
+      setEditingItemId((prev) => (prev && validIds.has(prev) ? prev : null));
       return;
     }
 
@@ -610,6 +613,13 @@ function OutlineEditPage({
       const wordControlOptions = getNormalizedWordControlOptions();
       const startedNow = Date.now();
       setStartingOutline(true);
+      // 重新生成会整体替换目录树，旧节点的编辑草稿（标题/描述/内容模式）必须清掉，
+      // 否则同号编号的新节点会带着陌生章节的草稿重新出现并可保存。
+      setEditingItemId(null);
+      setEditTitle('');
+      setEditDescription('');
+      setEditContentMode('ai-generate');
+      setEditContentModeNote('');
       setLocalStartAt(startedNow);
       setNowTick(startedNow);
       const nextOutlineMode: OutlineMode = isExpansionWorkflow ? 'aligned' : draftOutlineMode;
@@ -712,28 +722,37 @@ function OutlineEditPage({
   const getMutationLockMessage = () => {
     if (generating) return '目录生成任务正在运行，当前目录暂不可编辑';
     if (contentMutationLocked) return '正文生成任务正在运行或暂停中，请结束后再调整目录';
+    if (savingOutlineItem) return '目录正在保存中，请稍候';
     return '';
   };
 
-  const saveOutlineChange = async (outline: OutlineItem[], reason: SaveOutlineRequest['reason'], affectedNodeIds: string[] = []) => {
+  // 返回是否真正落库；被锁拦截或并发保存中时返回 false，
+  // 调用方不得提示成功、不得清理编辑态，避免“假成功”回滚用户输入。
+  const saveOutlineChange = async (outline: OutlineItem[], reason: SaveOutlineRequest['reason'], affectedNodeIds: string[] = []): Promise<boolean> => {
     if (!outlineData) {
-      return;
+      return false;
     }
     const lockMessage = getMutationLockMessage();
     if (lockMessage) {
       showToast(lockMessage, 'info');
-      return;
+      return false;
     }
 
     const normalizedOutline = normalizeOutlineContentModes(outline);
     assertLeafContentModes(normalizedOutline);
     const renumbered = renumberOutlineItemsWithIdMap(normalizedOutline);
-    await onOutlineSaved({
-      outlineData: { ...outlineData, outline: renumbered.outline },
-      reason,
-      idMap: renumbered.idMap,
-      affectedNodeIds,
-    });
+    setSavingOutlineItem(true);
+    try {
+      await onOutlineSaved({
+        outlineData: { ...outlineData, outline: renumbered.outline },
+        reason,
+        idMap: renumbered.idMap,
+        affectedNodeIds,
+      });
+      return true;
+    } finally {
+      setSavingOutlineItem(false);
+    }
   };
 
   const startEditing = (item: OutlineItem) => {
@@ -763,7 +782,7 @@ function OutlineEditPage({
       const nextNote = isLeaf && editContentMode === 'other' ? editContentModeNote.trim() || undefined : undefined;
       const contentModeChanged = Boolean(previous) && isLeaf
         && (prevMode !== editContentMode || prevNote !== nextNote);
-      await saveOutlineChange(updateOutlineItem(outlineData.outline, editingItemId, (item) => ({
+      const saved = await saveOutlineChange(updateOutlineItem(outlineData.outline, editingItemId, (item) => ({
         ...item,
         title: editTitle.trim() || item.title,
         description: editDescription.trim(),
@@ -772,6 +791,7 @@ function OutlineEditPage({
           content_mode_note: editContentMode === 'other' ? editContentModeNote.trim() || undefined : undefined,
         } : {}),
       })), 'edit', contentModeChanged ? [editingItemId] : []);
+      if (!saved) return;
       setEditingItemId(null);
       showToast(contentModeChanged ? '目录项已更新，相关正文已清空' : '目录项已更新，已保留该节正文，可按需重新生成', 'success');
     } catch (error) {
@@ -791,7 +811,8 @@ function OutlineEditPage({
       content_mode: 'ai-generate',
     };
     try {
-      await saveOutlineChange([...outlineData.outline, newItem], 'add-root');
+      const saved = await saveOutlineChange([...outlineData.outline, newItem], 'add-root');
+      if (!saved) return;
       setSelectedItemId(newItem.id);
       setEditingItemId(newItem.id);
       setEditTitle(newItem.title);
@@ -819,10 +840,11 @@ function OutlineEditPage({
     };
 
     try {
-      await saveOutlineChange(updateOutlineItem(outlineData.outline, parentId, (item) => ({
+      const saved = await saveOutlineChange(updateOutlineItem(outlineData.outline, parentId, (item) => ({
         ...item,
         children: [...(item.children || []), newItem],
       })), 'add-child', [parentId]);
+      if (!saved) return;
       setExpandedItems((prev) => new Set(prev).add(parentId));
       setSelectedItemId(newItem.id);
       setEditingItemId(newItem.id);
@@ -870,7 +892,8 @@ function OutlineEditPage({
         showToast('至少保留一个目录项', 'info');
         return;
       }
-      await saveOutlineChange(nextOutline, 'delete', removedIds);
+      const saved = await saveOutlineChange(nextOutline, 'delete', removedIds);
+      if (!saved) return;
       setSelectedItemId(null);
       showToast('目录项已删除', 'success');
     } catch (error) {
@@ -983,7 +1006,7 @@ function OutlineEditPage({
   };
 
   const handleDragStart = (event: DragEvent<HTMLDivElement>, item: OutlineItem) => {
-    if (!sorting) {
+    if (!sorting || savingSort) {
       return;
     }
     setDraggingItemId(item.id);
@@ -992,7 +1015,7 @@ function OutlineEditPage({
   };
 
   const handleDragOver = (event: DragEvent<HTMLDivElement>, item: OutlineItem) => {
-    if (!sorting || !draggingItemId) {
+    if (!sorting || savingSort || !draggingItemId) {
       return;
     }
     event.preventDefault();
@@ -1003,7 +1026,8 @@ function OutlineEditPage({
 
   const handleDrop = (event: DragEvent<HTMLDivElement>, item: OutlineItem) => {
     event.preventDefault();
-    if (!sorting || !draftOutlineData?.outline?.length || !draggingItemId) {
+    // 保存排序进行中不接受新 drop：原保存成功后会整体丢弃草稿，用户的移动会无声丢失。
+    if (!sorting || savingSort || !draftOutlineData?.outline?.length || !draggingItemId) {
       return;
     }
 
@@ -1024,6 +1048,20 @@ function OutlineEditPage({
 
     const position = dropTarget?.itemId === item.id ? dropTarget.position : getDropPosition(event);
     const reordered = reorderOutlineSiblings(draftOutlineData.outline, sourceLocation.parentId, draggingItemId, item.id, position);
+    // 落回原位（同级序列未变）视为无操作：不置脏、不重编号，避免空保存和误触未保存排序守卫。
+    const beforeSiblings = sourceLocation.parentId === null
+      ? draftOutlineData.outline
+      : findOutlineItem(draftOutlineData.outline, sourceLocation.parentId)?.children || [];
+    const afterSiblings = sourceLocation.parentId === null
+      ? reordered
+      : findOutlineItem(reordered, sourceLocation.parentId)?.children || [];
+    const orderUnchanged = beforeSiblings.length === afterSiblings.length
+      && beforeSiblings.every((sibling, index) => sibling.id === afterSiblings[index].id);
+    if (orderUnchanged) {
+      setDraggingItemId(null);
+      setDropTarget(null);
+      return;
+    }
     const renumbered = renumberOutlineItemsWithIdMap(reordered);
     sortIdMapRef.current = composeIdMap(sortIdMapRef.current, renumbered.idMap);
     setDraftOutlineData({ ...draftOutlineData, outline: renumbered.outline });
@@ -1055,7 +1093,7 @@ function OutlineEditPage({
       <div className="outline-tree-node" key={item.id} style={{ '--outline-level': level } as CSSProperties}>
         <div
           className={`outline-tree-item${isActive ? ' is-active' : ''}${sorting ? ' is-sorting' : ''}${isDragging ? ' is-dragging' : ''}${dropClass}`}
-          draggable={sorting}
+          draggable={sorting && !savingSort}
           onDragStart={(event) => handleDragStart(event, item)}
           onDragOver={(event) => handleDragOver(event, item)}
           onDrop={(event) => handleDrop(event, item)}
@@ -1351,6 +1389,7 @@ function OutlineEditPage({
                   <button type="button" className="outline-save-sort-action" onClick={() => { void saveSorting().catch((error) => showToast(error instanceof Error ? error.message : '保存排序失败', 'error')); }} disabled={savingSort}>
                     {savingSort ? '正在保存...' : '保存排序'}
                   </button>
+                  <button type="button" onClick={discardSorting} disabled={savingSort}>取消排序</button>
                   <button type="button" onClick={expandAllItems} disabled={!activeOutlineData?.outline?.length}>全部展开</button>
                   <button type="button" onClick={collapseAllItems} disabled={!activeOutlineData?.outline?.length}>全部折叠</button>
                 </>
@@ -1584,7 +1623,7 @@ function OutlineEditPage({
         actions={(
           <>
             <button type="button" className="secondary-action" onClick={() => setDeleteTarget(null)}>取消</button>
-            <button type="button" className="danger-action" onClick={() => { void confirmRemoveItem(); }}>确认删除</button>
+            <button type="button" className="danger-action" onClick={() => { void confirmRemoveItem(); }} disabled={outlineMutationLocked}>确认删除</button>
           </>
         )}
       />

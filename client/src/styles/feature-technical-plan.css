@@ -3497,6 +3497,34 @@
   border-radius: var(--yb-radius-pill);
 }
 
+.outline-progress-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.outline-cancel-action {
+  padding: 5px 12px;
+  color: var(--yb-danger);
+  font-size: 12px;
+  font-weight: 700;
+  background: rgba(200, 50, 32, 0.06);
+  border: 1px solid rgba(200, 50, 32, 0.28);
+  border-radius: var(--yb-radius-pill);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.outline-cancel-action:hover:not(:disabled) {
+  background: rgba(200, 50, 32, 0.12);
+  border-color: rgba(200, 50, 32, 0.45);
+}
+
+.outline-cancel-action:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .outline-tree-panel {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);

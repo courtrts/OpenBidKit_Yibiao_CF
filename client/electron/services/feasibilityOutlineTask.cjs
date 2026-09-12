@@ -54,7 +54,9 @@ function readJson(content, label) {
   try {
     return JSON.parse(String(content || '').trim());
   } catch (error) {
-    throw new Error(`${label}不是合法 JSON：${error?.message || String(error)}`);
+    // 不带解析细节：精确报错由 agent 会话内的 json-validation 工具提供，
+    // 此消息同时会进入自动修复提示词和用户可见错误，保持简短且无内部细节
+    throw new Error(`${label}不是合法 JSON，请修正为纯 JSON 后重写该文件`);
   }
 }
 
@@ -204,6 +206,21 @@ function finalizeOutline(raw, allowedKnowledgeIds = new Set()) {
   return outline;
 }
 
+// Agent 运行结束后的程序校验：JSON 可解析且归一化后存在可用一级目录。
+// 通过 piRuntimeService 的 validateOutput 前移执行——校验失败会触发一次自动修复
+// （buildRetryPrompt 携带本错误提示），仍失败则 runTask 以 failed 口径上报指标并
+// 触发诊断上报，避免"agent 记 success、父任务记失败"的统计口径断档。
+// 注意：不含 knowledge_item_ids 过滤（allowed 集合由调用方持有），
+// 避免与 runner 终算口径重复；返回 JSON 可序列化值（会写入任务结果文件）。
+function validateOutlineOutput(candidate = {}) {
+  const raw = readJson(candidate?.output_content, OUTLINE_OUTPUT_FILE);
+  const outline = assignOutlineIds(trimToThreeLevels(normalizeOutline(raw?.outline || [], new Set())));
+  if (!outline.length) {
+    throw new Error('模型未返回可用目录，请向 outline.json 写入完整的三级以内目录');
+  }
+  return { outlineCount: outline.length };
+}
+
 async function runFeasibilityOutlineTask({
   agentService,
   workspaceStore,
@@ -301,7 +318,8 @@ async function runFeasibilityOutlineTask({
     json_validation_schemas: {
       [OUTLINE_OUTPUT_FILE]: OUTLINE_JSON_SCHEMA,
     },
-    max_retries: 0,
+    max_retries: 1,
+    validateOutput: validateOutlineOutput,
     onActivity: publishAgentActivity,
     onCheckpoint: syncAgentCheckpoint,
   });
@@ -336,6 +354,7 @@ module.exports = {
   formatProgressTitle,
   buildAgentOutlineInput,
   finalizeOutline,
+  validateOutlineOutput,
   loadLightweightKnowledgeItems,
   allowedKnowledgeIdSet,
   runFeasibilityOutlineTask,

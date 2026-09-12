@@ -21,6 +21,7 @@ interface OutlinePageProps {
   onConfigChange: (config: { outlineTemplate: FeasibilityOutlineTemplate; targetWords: number; referenceDocumentIds: string[] }) => Promise<void>;
   onOutlineSaved: (request: FeasibilitySaveOutlineRequest) => Promise<void>;
   onStart: (config: { outlineTemplate: FeasibilityOutlineTemplate; targetWords: number; referenceDocumentIds: string[] }) => Promise<void>;
+  onCancel: (taskType: string) => Promise<void>;
 }
 
 const emptyKnowledgeIndex: KnowledgeBaseIndex = { folders: [], documents: [] };
@@ -88,6 +89,7 @@ function OutlinePage({
   onConfigChange,
   onOutlineSaved,
   onStart,
+  onCancel,
 }: OutlinePageProps) {
   const { showToast } = useToast();
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -101,6 +103,7 @@ function OutlinePage({
   const [editTitle, setEditTitle] = useState('');
   const [editDescription, setEditDescription] = useState('');
   const [progressCollapsed, setProgressCollapsed] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string; nodeCount: number } | null>(null);
   const logListRef = useRef<HTMLDivElement | null>(null);
@@ -154,6 +157,19 @@ function OutlinePage({
     setDraftWords(String(targetWords));
     setDraftKnowledgeIds(referenceDocumentIds);
     setDialogOpen(true);
+  };
+
+  const handleCancelTask = async () => {
+    if (!onCancel || cancelling || !task) return;
+    setCancelling(true);
+    try {
+      await onCancel(task.type);
+      showToast('已发送取消请求，正在停止任务…', 'info');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '取消任务失败，请重试', 'error');
+    } finally {
+      setCancelling(false);
+    }
   };
 
   const saveConfigAndStart = async () => {
@@ -288,7 +304,20 @@ function OutlinePage({
         <aside className="outline-progress-panel">
           <div className="analysis-result-head">
             <strong>{adjusting ? '调整过程' : '生成过程'}</strong>
-            <span>{running ? '进行中' : failed ? '失败' : outlineData ? '已完成' : '等待开始'}</span>
+            <div className="outline-progress-head-actions">
+              <span>{running ? '进行中' : failed ? '失败' : outlineData ? '已完成' : '等待开始'}</span>
+              {running && (
+                <button
+                  type="button"
+                  className="outline-cancel-action"
+                  onClick={() => { void handleCancelTask(); }}
+                  disabled={cancelling}
+                  aria-label="取消当前目录任务"
+                >
+                  {cancelling ? '取消中…' : '取消任务'}
+                </button>
+              )}
+            </div>
           </div>
           <div className={`content-outline-stats outline-progress-summary${progressCollapsed ? ' is-collapsed' : ''}`}>
             <button type="button" onClick={() => setProgressCollapsed((prev) => !prev)} aria-expanded={!progressCollapsed}>

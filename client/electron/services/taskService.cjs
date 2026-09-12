@@ -204,6 +204,25 @@ function isActiveTaskStatus(status) {
   return status === 'running' || status === 'pausing';
 }
 
+// 用户可见的任务错误文案：按错误码映射固定短句，其余消息剥离换行与绝对路径后截断，
+// 避免把堆栈、供应商端点、内部文件细节直接展示到界面（原始细节仍走诊断上报通道）。
+const TASK_ERROR_TEXT_BY_CODE = new Map([
+  ['AGENT_STALLED', '任务长时间无进展，已自动停止，请重新生成。'],
+  ['AGENT_DISCONNECTED', '与 AI 服务的连接中断，请重新生成。'],
+]);
+
+function userFacingTaskError(error, fallback = '任务执行失败') {
+  const code = String(error?.code || '');
+  if (TASK_ERROR_TEXT_BY_CODE.has(code)) return TASK_ERROR_TEXT_BY_CODE.get(code);
+  const message = String(error?.message || error || '').trim();
+  if (!message) return fallback;
+  const cleaned = message
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/([A-Za-z]:[\\/]|\/(?:Users|home|tmp|var)\/)\S+/g, '[路径]')
+    .trim();
+  return (cleaned || fallback).slice(0, 200) || fallback;
+}
+
 function hasOwn(value, field) {
   return Object.prototype.hasOwnProperty.call(value || {}, field);
 }
@@ -784,8 +803,10 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
     };
 
     // 将业务状态和任务状态作为同一个 checkpoint 落库，并在提交后统一推送事件。
-    const checkpointTask = (taskPartial, workspacePartial = {}, eventPatch) => {
-      if (taskControl.signal.aborted) {
+    // 任务已取消后中间 checkpoint 一律拒绝（避免取消后继续提交中间态）；
+    // 只有 settleCancelledTask 的终态兜底允许 allowAborted 旁路。
+    const commitTaskCheckpoint = (taskPartial, workspacePartial = {}, eventPatch, { allowAborted = false } = {}) => {
+      if (taskControl.signal.aborted && !allowAborted) {
         throw taskControl.signal.reason || new Error('后台任务已取消');
       }
       const nextTask = applyTaskPatch(taskPartial);
@@ -796,6 +817,27 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
       updateWorkspaceStateWithoutReload(definition, persistedPatch);
       emit(nextTask, buildSnapshot(definition, persistedPatch, nextTask, eventPatch));
       return { task: nextTask };
+    };
+
+    const checkpointTask = (taskPartial, workspacePartial, eventPatch) => commitTaskCheckpoint(taskPartial, workspacePartial, eventPatch);
+
+    // 取消后的终态兜底：强制落库 error 终态并推送事件。
+    // 没有这一步，持久化状态会停在取消前的 "running"（僵尸任务）：
+    // 页面步骤锁死、桌宠 chat 的 pending 永不复位，重启后才被恢复逻辑误标为"应用关闭"。
+    const settleCancelledTask = (error) => {
+      const reason = taskControl.signal.reason;
+      const source = reason instanceof Error ? reason : (error instanceof Error ? error : null);
+      const message = source?.message || '后台任务已取消';
+      try {
+        commitTaskCheckpoint(
+          { status: 'error', error: userFacingTaskError(message), pause_requested: false },
+          {},
+          { cancelled: true },
+          { allowAborted: true },
+        );
+      } catch (commitError) {
+        console.error('[task] 取消终态落库失败', commitError);
+      }
     };
 
     // 为一级目录默认选择注册自动确认，并把截止时间同步到任务状态。
@@ -907,12 +949,17 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
         },
       );
       runner({ aiService: runnerAiService, agentService: runnerAgentService, ordinaryAgentService: runnerOrdinaryAgentService, workspaceStore: runnerWorkspaceStore, knowledgeBaseService, openXmlHelperService, updateTask, checkpointTask, payload, taskControl, previousState }).catch((error) => {
+        // 取消必须落终态：否则持久化状态停在"running"成为僵尸任务
+        if (taskControl.signal.aborted) {
+          settleCancelledTask(error);
+          return;
+        }
         // 用户暂停导致 AI 队列作用域拒绝时落 paused 而非 error（与 runner 内部
         // 显式 catch 同语义，兜底防止 runner 未自行捕获的路径漏到 error 终态）
         if (error?.code === 'AI_QUEUE_SCOPE_PAUSED') {
           checkpointTask({ status: 'paused', pause_requested: false, error: '' });
-        } else if (!taskControl.signal.aborted) {
-          checkpointTask({ status: 'error', error: error.message || '任务执行失败' });
+        } else {
+          checkpointTask({ status: 'error', error: userFacingTaskError(error) });
         }
       }).finally(() => {
         taskControl.dispose();
@@ -924,9 +971,11 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
         resolveSettled();
       });
     } catch (error) {
-      if (!taskControl.signal.aborted) {
+      if (taskControl.signal.aborted) {
+        settleCancelledTask(error);
+      } else {
         try {
-          checkpointTask({ status: 'error', error: error.message || '任务启动失败' });
+          checkpointTask({ status: 'error', error: userFacingTaskError(error, '任务启动失败') });
         } catch {}
       }
       taskControl.dispose();
@@ -1357,7 +1406,8 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
       return {
         ...task,
         status: 'error',
-        progress: 100,
+        // 与目录 AI 调整分支口径一致：error 态进度封顶 99，避免"失败"却显示 100%
+        progress: Math.max(0, Math.min(99, Number(task.progress || 0) || 0)),
         error: message,
         logs: [...(Array.isArray(task.logs) ? task.logs : []), message],
         updated_at: now(),
@@ -1621,6 +1671,23 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
     },
     startFeasibilityHumanWriting(payload) {
       return startManagedTask('feasibility-human-writing', payload, runFeasibilityHumanWritingTask);
+    },
+    // 用户可触达的取消入口：只允许取消 feasibility-report 组的活跃任务。
+    // 终态由 startManagedTask 的取消兜底异步写入并推送事件，这里立即返回，
+    // 界面在收到终态事件后解除步骤锁。
+    cancelFeasibilityTask(payload = {}) {
+      const type = String(payload?.type || '');
+      const definition = getTaskDefinition(type);
+      if (!definition || definition.group !== 'feasibility-report') {
+        throw new Error('未知任务类型');
+      }
+      const task = activeTasks.get(type);
+      const control = activeTaskControls.get(type);
+      if (!task || !isActiveTaskStatus(task.status) || !control?.cancel) {
+        throw new Error('当前任务未在运行');
+      }
+      control.cancel('已取消该任务');
+      return { success: true, task_id: task.task_id };
     },
     confirmOutlineSelection(payload) {
       const control = activeTaskControls.get('outline-generation');

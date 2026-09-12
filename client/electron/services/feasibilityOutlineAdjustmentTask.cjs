@@ -8,6 +8,7 @@ const {
   finalizeOutline,
   loadLightweightKnowledgeItems,
   allowedKnowledgeIdSet,
+  validateOutlineOutput,
 } = require('./feasibilityOutlineTask.cjs');
 
 function createFeasibilityOutlineAdjustmentPrompt(requirement) {
@@ -87,7 +88,8 @@ async function runFeasibilityOutlineAdjustmentTask({
     },
     initial_stage: 'feasibility-outline-adjustment',
     json_validation_schemas: { [OUTLINE_OUTPUT_FILE]: OUTLINE_JSON_SCHEMA },
-    max_retries: 0,
+    max_retries: 1,
+    validateOutput: validateOutlineOutput,
     onActivity: publishAgentActivity,
   });
 

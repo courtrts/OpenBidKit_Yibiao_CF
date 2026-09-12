@@ -262,6 +262,7 @@ const bridge = {
     startFeasibilityContent: (payload) => invoke('tasks:start-feasibility-content', payload),
     pauseFeasibilityContent: () => invoke('tasks:pause-feasibility-content'),
     startFeasibilityHumanWriting: (payload) => invoke('tasks:start-feasibility-human-writing', payload),
+    cancelFeasibilityTask: (payload) => invoke('tasks:cancel-feasibility-task', payload),
     getActiveTasks: () => invoke('tasks:get-active'),
     onTaskEvent: (callback) => {
       ipcRenderer.send('tasks:subscribe');

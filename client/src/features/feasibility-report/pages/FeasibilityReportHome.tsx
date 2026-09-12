@@ -686,6 +686,9 @@ function FeasibilityReportHome({ registerLeaveGuard, onSectionChange }: Feasibil
             }
           }}
           onStart={startOutline}
+          onCancel={async (taskType) => {
+            await window.yibiao!.tasks.cancelFeasibilityTask({ type: taskType });
+          }}
         />
       )}
       {state.step === 'parameters' && (

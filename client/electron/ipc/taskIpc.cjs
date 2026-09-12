@@ -69,6 +69,10 @@ function registerTaskIpc({ taskService }) {
     taskService.subscribe(event.sender);
     return taskService.startFeasibilityHumanWriting(payload);
   });
+  ipcMain.handle('tasks:cancel-feasibility-task', (event, payload) => {
+    taskService.subscribe(event.sender);
+    return taskService.cancelFeasibilityTask(payload);
+  });
   ipcMain.handle('tasks:get-active', (event) => {
     // 只读查询不再 subscribe：subscribe 会向调用方回显全部活动任务快照，
     // 与渲染层"收到事件→查询"的刷新模式互相触发，形成自激事件循环。

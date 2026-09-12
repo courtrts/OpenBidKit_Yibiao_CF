@@ -1268,6 +1268,18 @@ function ContentEditPage({
               {cancellingContentTask ? '取消中…' : '取消生成'}
             </button>
           )}
+          {contentIllustrationPlan?.items?.length ? (
+            <button
+              type="button"
+              className="secondary-action"
+              onClick={() => void rerunIllustrations()}
+              disabled={taskBlocksGeneration}
+              aria-label="仅重新生成全文配图"
+              title="清除现有配图并重新编排生成（不影响正文内容）"
+            >
+              仅重新配图
+            </button>
+          ) : null}
           {awaitingContentDecision ? (
             <>
               {unresolvedCount > 0 && (
@@ -1300,12 +1312,6 @@ function ContentEditPage({
               成功 <b>{illustrationStats[kind].success}</b>
             </span>
           ))}
-          <button
-            type="button"
-            className="secondary-action content-dev-stats-action"
-            disabled={taskBlocksGeneration}
-            onClick={() => void rerunIllustrations()}
-          >仅重新配图</button>
         </aside>
       )}
 
@@ -1329,6 +1335,7 @@ function ContentEditPage({
                 <ProgressBar value={displayProgress} tone={progressTone} active={progressActive} label={`${progressPhaseLabel}进度 ${displayProgress}%`} />
                 <p>{progressDescription}</p>
                 {failedCount > 0 && <small>失败 {failedCount} 个小节</small>}
+                {contentStats?.illustration_failure_warning && <small>{contentStats.illustration_failure_warning}</small>}
               </div>
             )}
           </div>
@@ -1449,7 +1456,7 @@ function ContentEditPage({
               <Dialog.Title>{willOverwriteAllSections ? '重新生成正文（将覆盖现有内容）' : '正文生成配置'}</Dialog.Title>
               {willOverwriteAllSections && (
                 <Dialog.Description className="content-regenerate-warning">
-                  当前全部 {leaves.length} 个小节已生成正文，重新生成将覆盖现有内容（含手动润色的修改，暂存草稿仍可恢复）。请确认不再需要现有正文。
+                  当前全部 {leaves.length} 个小节已生成正文。重新生成将逐小节覆盖：成功重生成的小节会覆盖现有正文（含手动润色的修改，暂存草稿仍可恢复）；重生成失败的小节保留原有正文。请确认后再开始。
                 </Dialog.Description>
               )}
             </div>

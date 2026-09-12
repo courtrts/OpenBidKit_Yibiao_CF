@@ -222,7 +222,27 @@ function buildWordControlWarningDialog(task: BackgroundTaskState, state: Technic
   }
 
   const contentStats = task.stats?.content;
-  if (!contentStats?.word_control_warning) return null;
+  if (!contentStats || (!contentStats.word_control_warning && !contentStats.illustration_failure_warning)) return null;
+
+  // 配图失败告警：复用本对话框（metrics 复用、无未达标小节列表），
+  // 重试入口为正文编辑页 command-bar 的「仅重新配图」
+  if (!contentStats.word_control_warning && contentStats.illustration_failure_warning) {
+    const illustrationItems = state.contentIllustrationPlan?.items || [];
+    const failedIllustrationCount = illustrationItems.filter((item) => item.generation?.status === 'error').length;
+    return {
+      taskId: task.task_id,
+      title: '部分配图生成失败',
+      message: contentStats.illustration_failure_warning,
+      metrics: [{
+        label: '配图生成',
+        expected: illustrationItems.length ? `共 ${illustrationItems.length} 项` : '—',
+        actual: `${failedIllustrationCount} 项失败（正文已保留）`,
+      }],
+      sections: [],
+    };
+  }
+
+  if (!contentStats.word_control_warning) return null;
 
   const minimumWords = contentStats.minimum_words || 0;
   const maximumWords = contentStats.maximum_words || 0;
@@ -740,7 +760,9 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
       }
 
       if (latestTask?.status === 'success' && !shownWordControlWarningTaskIdsRef.current.has(latestTask.task_id)) {
-        const warning = latestTask.stats?.outline?.word_adjustment_warning || latestTask.stats?.content?.word_control_warning;
+        const warning = latestTask.stats?.outline?.word_adjustment_warning
+          || latestTask.stats?.content?.word_control_warning
+          || latestTask.stats?.content?.illustration_failure_warning;
         if (warning) {
           setPendingWordControlWarningTaskId(latestTask.task_id);
         }

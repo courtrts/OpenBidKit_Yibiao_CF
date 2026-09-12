@@ -1310,8 +1310,13 @@ function normalizeContentExpansionPatch(value) {
   const source = value?.result && typeof value.result === 'object' ? value.result : value || {};
   const rawPatch = Array.isArray(source.operations) ? source.operations[0] : Array.isArray(source.patches) ? source.patches[0] : source;
   const operation = String(rawPatch.operation || rawPatch.type || '').trim().toLowerCase();
-  const anchor = singleLine(rawPatch.anchor || rawPatch.position || rawPatch.after || rawPatch.target || rawPatch.replace_target || 'end') || 'end';
-  const targetText = normalizeNewlines(rawPatch.target_text ?? rawPatch.targetText ?? rawPatch.old_text ?? rawPatch.oldText ?? '').trim();
+  // target/replace_target 是“替换目标”语义，不能进 insert 锚点链——
+  // 否则模型返回的待替换文本会被误当锚点导致插入位置错乱；
+  // replace_target 只允许作为 replace 的 target_text 兜底来源。
+  // target/replace_target 是“替换目标”语义，不进 insert 锚点链（否则模型给的
+  // 替换目标文本会被误认成锚点）；replace_target 仅可降级进 replace 的 target_text 链
+  const anchor = singleLine(rawPatch.anchor || rawPatch.position || rawPatch.after || 'end') || 'end';
+  const targetText = normalizeNewlines(rawPatch.target_text ?? rawPatch.targetText ?? rawPatch.old_text ?? rawPatch.oldText ?? rawPatch.replace_target ?? '').trim();
   const content = normalizeGeneratedMarkdown(String(rawPatch.content || rawPatch.paragraph || rawPatch.text || rawPatch.new_content || ''))
     .replace(/```[\s\S]*?```/g, '')
     .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
@@ -2250,8 +2255,11 @@ function applyContentExpansionPatch(content, patch) {
   const paragraphs = normalizeParagraphs(normalizedContent);
   const anchor = String(patch.anchor || '').trim();
   const anchorKey = anchor.replace(/\s+/g, ' ').trim();
-  const anchorIndex = anchorKey && !/^end$/i.test(anchorKey)
-    ? paragraphs.findIndex((paragraph) => paragraph.replace(/\s+/g, ' ').includes(anchorKey) || anchorKey.includes(paragraph.replace(/\s+/g, ' ')))
+  // 只允许“段落包含锚点”的单向匹配：反向包含会让锚点长句误命中正文里的
+  // 短段（如“是。”），补写内容会静默插到错误位置；过短锚点（<6 字符）
+  // 同样容易撞词误命中，直接落入末尾追加兜底。
+  const anchorIndex = anchorKey && anchorKey.length >= 6 && !/^end$/i.test(anchorKey)
+    ? paragraphs.findIndex((paragraph) => paragraph.replace(/\s+/g, ' ').includes(anchorKey))
     : -1;
 
   if (/^start$/i.test(anchorKey)) {
@@ -2296,7 +2304,8 @@ function stripRepeatedChapterTitle(content, chapter) {
   let comparable = firstLine;
 
   if (chapterId) {
-    comparable = comparable.replace(new RegExp(`^${escapeRegExp(chapterId)}\\s+`), '').trim();
+    // id 与标题之间的分隔符可能是空白，也可能是中文顿号/点（“2.1、标题”格式）
+    comparable = comparable.replace(new RegExp(`^${escapeRegExp(chapterId)}[\\s、.．]*`), '').trim();
   }
   comparable = comparable.replace(/^[一二三四五六七八九十]+[、.．]\s*/, '').trim();
 
@@ -6503,6 +6512,13 @@ workspace 文件说明：
     sections = applied.sections;
     rebuildContentWordCounts();
     refreshIllustrationGenerationStats('图片生成和正文插入完成');
+    const failedIllustrationCount = illustrationPlan.items.filter((item) => item.generation?.status === 'error').length;
+    if (failedIllustrationCount > 0) {
+      contentStats.illustration_failure_warning = `配图生成完成，${failedIllustrationCount} 项失败（对应正文已保留），可点击「仅重新配图」重试。`;
+      logs = [...logs, contentStats.illustration_failure_warning];
+    } else {
+      contentStats.illustration_failure_warning = undefined;
+    }
     const completedRuntime = syncRuntime({ phase: 'illustration-generating' });
     logs = [...logs, '图片生成阶段完成。'];
     checkpointTask({ status: 'running', progress: progressFor(leaves, sections), logs, stats: statsSnapshot() }, {

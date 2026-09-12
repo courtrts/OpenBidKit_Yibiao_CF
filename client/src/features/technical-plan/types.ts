@@ -138,6 +138,7 @@ export interface BackgroundTaskState {
       total_adjustment_item_id?: string;
       total_adjustment_remaining_words?: number;
       word_control_warning?: string;
+      illustration_failure_warning?: string;
       audit_group_total?: number;
       audit_group_completed?: number;
       audit_step?: '' | 'checking' | 'fixing' | 'agent' | 'done';

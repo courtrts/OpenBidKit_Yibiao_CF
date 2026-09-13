@@ -235,8 +235,55 @@ function FontPicker({ value, options, onChange }: FontPickerProps) {
   );
 }
 
-function headingNumberExample(index: number, heading: HeadingStyleConfig): string {
-  const sampleIds = ['1', '1.1', '1.1.1', '1.1.1.1', '1.1.1.1.1', '1.1.1.1.1.1'];
+interface NumberFieldProps {
+  value: number;
+  min?: number;
+  max?: number;
+  step?: number;
+  placeholder?: string;
+  ariaLabel?: string;
+  onChange: (value: number) => void;
+}
+
+// 数字输入：聚焦期间自由编辑（清空、输入小数点不再闪变为 0 或 NaN），
+// 失焦时统一解析并夹取到 [min,max] 后提交；非法输入回滚显示原值。
+function NumberField({ value, min, max, step, placeholder, ariaLabel, onChange }: NumberFieldProps) {
+  const [draft, setDraft] = useState(String(value));
+  const [focused, setFocused] = useState(false);
+
+  useEffect(() => {
+    if (!focused) setDraft(String(value));
+  }, [focused, value]);
+
+  return (
+    <input
+      type="number"
+      min={min}
+      max={max}
+      step={step}
+      value={draft}
+      placeholder={placeholder}
+      aria-label={ariaLabel}
+      onFocus={() => setFocused(true)}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={() => {
+        setFocused(false);
+        const parsed = Number(draft);
+        if (draft.trim() === '' || !Number.isFinite(parsed)) {
+          setDraft(String(value));
+          return;
+        }
+        let clamped = parsed;
+        if (min !== undefined && clamped < min) clamped = min;
+        if (max !== undefined && clamped > max) clamped = max;
+        setDraft(String(clamped));
+        if (clamped !== value) onChange(clamped);
+      }}
+    />
+  );
+}
+
+function headingNumberExample(index: number, heading: HeadingStyleConfig): string {  const sampleIds = ['1', '1.1', '1.1.1', '1.1.1.1', '1.1.1.1.1', '1.1.1.1.1.1'];
   return formatOutlineNumber(sampleIds[index] || '1', heading);
 }
 
@@ -763,10 +810,10 @@ function ExportFormatPage({ mode = 'create', templateId = null, onBack }: Export
         <div className="settings-row">
           <div className="settings-row-copy"><strong>页边距</strong><span>上 / 右 / 下 / 左（厘米）</span></div>
           <div className="export-format-margin-grid">
-            <input type="number" min={0} max={10} step={0.1} value={config.page.margin_top_cm} onChange={(event) => updatePage({ margin_top_cm: Number(event.target.value) })} placeholder="上" />
-            <input type="number" min={0} max={10} step={0.1} value={config.page.margin_right_cm} onChange={(event) => updatePage({ margin_right_cm: Number(event.target.value) })} placeholder="右" />
-            <input type="number" min={0} max={10} step={0.1} value={config.page.margin_bottom_cm} onChange={(event) => updatePage({ margin_bottom_cm: Number(event.target.value) })} placeholder="下" />
-            <input type="number" min={0} max={10} step={0.1} value={config.page.margin_left_cm} onChange={(event) => updatePage({ margin_left_cm: Number(event.target.value) })} placeholder="左" />
+            <NumberField value={config.page.margin_top_cm} min={0} max={10} step={0.1} placeholder="上" onChange={(v) => updatePage({margin_top_cm: v})} />
+            <NumberField value={config.page.margin_right_cm} min={0} max={10} step={0.1} placeholder="右" onChange={(v) => updatePage({margin_right_cm: v})} />
+            <NumberField value={config.page.margin_bottom_cm} min={0} max={10} step={0.1} placeholder="下" onChange={(v) => updatePage({margin_bottom_cm: v})} />
+            <NumberField value={config.page.margin_left_cm} min={0} max={10} step={0.1} placeholder="左" onChange={(v) => updatePage({margin_left_cm: v})} />
           </div>
         </div>
         <label className="settings-row">
@@ -836,7 +883,7 @@ function ExportFormatPage({ mode = 'create', templateId = null, onBack }: Export
         {(config.page.footer_enabled || config.page.page_number_enabled) && (
           <label className="settings-row">
             <div className="settings-row-copy"><strong>距底边距离</strong><span>页脚或页码距页面底边，单位：厘米</span></div>
-            <input type="number" min={0} max={5} step={0.1} value={config.page.footer_distance_cm} onChange={(event) => updatePage({ footer_distance_cm: Number(event.target.value) })} />
+            <NumberField value={config.page.footer_distance_cm} min={0} max={5} step={0.1} onChange={(v) => updatePage({footer_distance_cm: v})} />
           </label>
         )}
         <label className="settings-row">
@@ -851,7 +898,7 @@ function ExportFormatPage({ mode = 'create', templateId = null, onBack }: Export
             </label>
             <label className="settings-row">
               <div className="settings-row-copy"><strong>页码起始值</strong></div>
-              <input type="number" min={1} max={9999} step={1} value={config.page.page_number_start} onChange={(event) => updatePage({ page_number_start: Number(event.target.value) })} />
+              <NumberField value={config.page.page_number_start} min={1} max={9999} step={1} onChange={(v) => updatePage({page_number_start: v})} />
             </label>
           </>
         )}
@@ -1016,15 +1063,15 @@ function ExportFormatPage({ mode = 'create', templateId = null, onBack }: Export
                     </label>
                     <label>
                       <span>段前（磅）</span>
-                      <input type="number" min={0} max={100} step={1} value={heading.spacing_before_pt} onChange={(event) => updateHeading(index, { spacing_before_pt: Number(event.target.value) })} />
+                      <NumberField value={heading.spacing_before_pt} min={0} max={100} step={1} onChange={(v) => updateHeading(index, { spacing_before_pt: v })} />
                     </label>
                     <label>
                       <span>段后（磅）</span>
-                      <input type="number" min={0} max={100} step={1} value={heading.spacing_after_pt} onChange={(event) => updateHeading(index, { spacing_after_pt: Number(event.target.value) })} />
+                      <NumberField value={heading.spacing_after_pt} min={0} max={100} step={1} onChange={(v) => updateHeading(index, { spacing_after_pt: v })} />
                     </label>
                     <label>
                       <span>行距（倍）</span>
-                      <input type="number" min={0.5} max={5} step={0.1} value={heading.line_spacing} onChange={(event) => updateHeading(index, { line_spacing: Number(event.target.value) })} />
+                      <NumberField value={heading.line_spacing} min={0.5} max={5} step={0.1} onChange={(v) => updateHeading(index, { line_spacing: v })} />
                     </label>
                   </div>
                 </div>
@@ -1057,19 +1104,19 @@ function ExportFormatPage({ mode = 'create', templateId = null, onBack }: Export
         </label>
         <label className="settings-row">
           <div className="settings-row-copy"><strong>段前（磅）</strong></div>
-          <input type="number" min={0} max={100} step={1} value={config.body_text.spacing_before_pt} onChange={(event) => updateBodyText({ spacing_before_pt: Number(event.target.value) })} />
+          <NumberField value={config.body_text.spacing_before_pt} min={0} max={100} step={1} onChange={(v) => updateBodyText({spacing_before_pt: v})} />
         </label>
         <label className="settings-row">
           <div className="settings-row-copy"><strong>段后（磅）</strong></div>
-          <input type="number" min={0} max={100} step={1} value={config.body_text.spacing_after_pt} onChange={(event) => updateBodyText({ spacing_after_pt: Number(event.target.value) })} />
+          <NumberField value={config.body_text.spacing_after_pt} min={0} max={100} step={1} onChange={(v) => updateBodyText({spacing_after_pt: v})} />
         </label>
         <label className="settings-row">
           <div className="settings-row-copy"><strong>首行缩进（字符）</strong></div>
-          <input type="number" min={0} max={10} step={0.5} value={config.body_text.first_line_indent_chars} onChange={(event) => updateBodyText({ first_line_indent_chars: Number(event.target.value) })} />
+          <NumberField value={config.body_text.first_line_indent_chars} min={0} max={10} step={0.5} onChange={(v) => updateBodyText({first_line_indent_chars: v})} />
         </label>
         <label className="settings-row">
           <div className="settings-row-copy"><strong>行间距（倍）</strong></div>
-          <input type="number" min={0.5} max={5} step={0.1} value={config.body_text.line_spacing_multiple} onChange={(event) => updateBodyText({ line_spacing_multiple: Number(event.target.value) })} />
+          <NumberField value={config.body_text.line_spacing_multiple} min={0.5} max={5} step={0.1} onChange={(v) => updateBodyText({line_spacing_multiple: v})} />
         </label>
         <label className="settings-row">
           <div className="settings-row-copy"><strong>无序列表符号</strong><span>Markdown “- 内容”的无序列表</span></div>
@@ -1100,7 +1147,7 @@ function ExportFormatPage({ mode = 'create', templateId = null, onBack }: Export
         </label>
         <label className="settings-row">
           <div className="settings-row-copy"><strong>列表缩进（字符）</strong></div>
-          <input type="number" min={0} max={10} step={0.5} value={config.body_text.list_indent_chars} onChange={(event) => updateBodyText({ list_indent_chars: Number(event.target.value) })} />
+          <NumberField value={config.body_text.list_indent_chars} min={0} max={10} step={0.5} onChange={(v) => updateBodyText({list_indent_chars: v})} />
         </label>
       </div>
     </>
@@ -1146,7 +1193,7 @@ function ExportFormatPage({ mode = 'create', templateId = null, onBack }: Export
       <div className="settings-list">
         <label className="settings-row">
           <div className="settings-row-copy"><strong>线框宽度</strong></div>
-          <input type="number" min={0} max={10} step={0.5} value={config.table.border_width} onChange={(event) => updateTable({ border_width: Number(event.target.value) })} />
+          <NumberField value={config.table.border_width} min={0} max={10} step={0.5} onChange={(v) => updateTable({border_width: v})} />
         </label>
         <label className="settings-row">
           <div className="settings-row-copy"><strong>线框颜色</strong></div>
@@ -1154,7 +1201,7 @@ function ExportFormatPage({ mode = 'create', templateId = null, onBack }: Export
         </label>
         <label className="settings-row">
           <div className="settings-row-copy"><strong>单元格内边距</strong></div>
-          <input type="number" min={0} max={50} step={1} value={config.table.cell_padding_pt} onChange={(event) => updateTable({ cell_padding_pt: Number(event.target.value) })} />
+          <NumberField value={config.table.cell_padding_pt} min={0} max={50} step={1} onChange={(v) => updateTable({cell_padding_pt: v})} />
         </label>
         <label className="settings-row">
           <div className="settings-row-copy"><strong>表格铺满页面</strong></div>
@@ -1172,7 +1219,7 @@ function ExportFormatPage({ mode = 'create', templateId = null, onBack }: Export
       <div className="settings-list">
         <label className="settings-row">
           <div className="settings-row-copy"><strong>图片最大宽度（%）</strong></div>
-          <input type="number" min={10} max={100} step={1} value={config.image.max_width_percent} onChange={(event) => updateImage({ max_width_percent: Number(event.target.value) })} />
+          <NumberField value={config.image.max_width_percent} min={10} max={100} step={1} onChange={(v) => updateImage({max_width_percent: v})} />
         </label>
         <label className="settings-row">
           <div className="settings-row-copy"><strong>图片对齐方式</strong></div>

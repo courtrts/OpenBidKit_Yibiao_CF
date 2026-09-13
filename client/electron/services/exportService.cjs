@@ -5,6 +5,7 @@ const { app, dialog, nativeImage } = require('electron');
 const cheerio = require('cheerio');
 const { imageSize } = require('image-size');
 const { compactLogError, createDeveloperLogger, textMetrics } = require('../utils/developerLog.cjs');
+const { userFacingTaskError } = require('../utils/taskErrorText.cjs');
 const { getMermaidCacheEntry, saveMermaidCacheImage } = require('../utils/mermaidCache.cjs');
 const { getGeneratedImagesDir, getImportedImagesDir } = require('../utils/paths.cjs');
 const { REMOTE_IMAGE_RETRY_ATTEMPTS, REMOTE_IMAGE_RETRY_DELAY_MS } = require('../utils/remoteImageRetry.cjs');
@@ -1283,7 +1284,9 @@ async function imageRunFromNode(node, context, options = {}) {
       ? options.loadedImage
       : await loadImageWithRetry(node.url, context, options.loadRetry);
   } catch (error) {
-    const message = `图片无法导出：${imageLabel}，${compactText(error.message || '下载失败', 120)}`;
+    // 用户可见告警/文档占位文案统一净化：原始报错可能携带图片 URL/路径，
+    // 诊断通道 writeExportLog 下方仍保留 compactLogError 原始细节
+    const message = `图片无法导出：${imageLabel}，${userFacingTaskError(error, '图片下载失败')}`;
     addWarning(context, message);
     writeExportLog(context, 'export.image.error', {
       image_index: imageIndex,
@@ -1308,7 +1311,7 @@ async function imageRunFromNode(node, context, options = {}) {
   try {
     loaded = normalizeImageForDocx(loaded);
   } catch (error) {
-    const message = `图片无法导出：${imageLabel}，${error.message || '图片格式转换失败'}`;
+    const message = `图片无法导出：${imageLabel}，${userFacingTaskError(error, '图片格式转换失败')}`;
     addWarning(context, message);
     writeExportLog(context, 'export.image.error', {
       image_index: imageIndex,
@@ -1652,7 +1655,7 @@ async function mermaidCodeToDocxBlocks(code, context) {
       : `Mermaid 图 ${nextIndex}/${total} 已转换并缓存。`);
     return [block];
   } catch (error) {
-    const message = `Mermaid 图无法导出：${compactText(error.message || '转换失败', 120)}`;
+    const message = `Mermaid 图无法导出：${userFacingTaskError(error, '图形转换失败')}`;
     addWarning(context, message);
     writeExportLog(context, 'export.mermaid.error', {
       mermaid_index: nextIndex,
@@ -1824,10 +1827,11 @@ async function addMarkdownContent(children, content, context, sectionLabel = '')
   try {
     children.push(...await markdownToDocxBlocks(content, context));
   } catch (error) {
-    const message = error?.message || String(error);
-    addWarning(context, `${sectionLabel || '一个小节'}转换失败，已降级为占位说明（${message.slice(0, 120)}）`);
+    // 用户可见告警/文档占位文案统一净化：原始报错可能携带内部 HTML/路径细节
+    const message = userFacingTaskError(error, '小节内容转换失败');
+    addWarning(context, `${sectionLabel || '一个小节'}转换失败，已降级为占位说明（${message}）`);
     children.push(paragraph([
-      textRun(`【本节内容导出失败，请回到标书正文核对该节（${message.slice(0, 120)}）】`, { color: 'C0392B', size: 22 }),
+      textRun(`【本节内容导出失败，请回到标书正文核对该节（${message}）】`, { color: 'C0392B', size: 22 }),
     ]));
   }
 }

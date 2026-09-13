@@ -14,6 +14,8 @@ function userFacingTaskError(error, fallback = '任务执行失败') {
   if (!message) return fallback;
   const cleaned = message
     .replace(/[\r\n]+/g, ' ')
+    // URL token（图片下载/远程资源/Mermaid 等错误常携带端点）剥离为 [链接]，避免内部端点外显
+    .replace(/(?:https?|file):\/\/\S+/gi, '[链接]')
     .replace(/([A-Za-z]:[\\/]|\/(?:Users|home|tmp|var)\/)\S+/g, '[路径]')
     .trim();
   return (cleaned || fallback).slice(0, 200) || fallback;

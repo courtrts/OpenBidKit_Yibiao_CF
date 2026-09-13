@@ -47,6 +47,7 @@ const { initLocalImageRenderService } = require('../services/localImageRenderSer
 const { createOpenXmlHelperService } = require('../services/openXmlHelperService.cjs');
 const { cleanupTrashDirSync } = require('../utils/forceRemove.cjs');
 const { getWorkspaceTrashDir } = require('../utils/paths.cjs');
+const { userFacingTaskError } = require('../utils/taskErrorText.cjs');
 
 let pendingUiCurrentView = null;
 let agentWorkspaceServiceRef = null;
@@ -219,7 +220,10 @@ function registerPendingWorkspaceDatabaseIpc(getStatus) {
 }
 
 function registerUnavailableWorkspaceDatabaseIpc(error) {
-  const message = `工作区数据库初始化失败：${error?.message || String(error)}`;
+  // raw 初始化错误（SQLite 消息常含本机绝对路径与 OS 细节）会经占位通道与
+  // workspace-database:status 事件直达渲染层门控屏，必须净化后展示；
+  // 自身的可行动文案（如数据库版本过新的升级提示）不含路径会被原样保留。
+  const message = userFacingTaskError(error, '本地数据库初始化失败，请重启应用重试');
   const throwUnavailable = () => {
     throw new Error(message);
   };
@@ -475,7 +479,8 @@ function registerIpcHandlers({ app, mainWindow, getMainWindow, checkAndDownloadU
         databaseStatus.updateStatus({
           phase: 'error',
           ready: false,
-          message: `本地数据库初始化失败：${error?.message || String(error)}`,
+          // 与 registerUnavailableWorkspaceDatabaseIpc 同口径：门控屏直显的 message 不携带本机路径
+          message: userFacingTaskError(error, '本地数据库初始化失败，请重启应用重试'),
         });
         registerUnavailableWorkspaceDatabaseIpc(error);
       }

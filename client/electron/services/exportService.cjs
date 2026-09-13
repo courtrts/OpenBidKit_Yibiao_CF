@@ -934,7 +934,8 @@ function numberToChinese(num) {
   }
   const th = Math.floor(n / 1000);
   const r = n % 1000;
-  return `${digits[th]}千${r === 0 ? '' : r < 100 ? `零${numberToChinese(r)}` : numberToChinese(r)}`;
+  // 千位分支补「零一十」口径（与百位分支一致）：1010 应为「一千零一十」而非「一千零十」。
+  return `${digits[th]}千${r === 0 ? '' : r < 100 ? (r >= 10 && r <= 19 ? `零一${numberToChinese(r)}` : `零${numberToChinese(r)}`) : numberToChinese(r)}`;
 }
 
 function numberToCircled(num) {
@@ -1504,9 +1505,12 @@ async function htmlTableToDocx($, tableNode, context) {
 
   for (const [rowIndex, row] of rowDescriptors.entries()) {
     const cells = [];
+    // 表头行以含 th 判定（markdown-it 渲染的 GFM 表头恒为 th）：
+    // 纯 td 表格（无表头语义）不再把首个数据行误判为表头行。
+    const firstRowIsHeader = rowIndex === 0 && row.cells.some((cell) => htmlTagName(cell.node) === 'th');
     for (const [cellIndex, cell] of row.cells.entries()) {
       const cellNode = cell.node;
-      const isHeader = rowIndex === 0 || htmlTagName(cellNode) === 'th';
+      const isHeader = firstRowIsHeader || htmlTagName(cellNode) === 'th';
       const isFirstColumn = !isHeader && cellIndex === 0;
       const cellStyle = getTableCellStyle(context, { isHeader, isFirstColumn });
       const remainingSpan = cellIndex === row.cells.length - 1 ? maxColumns - row.columnCount : 0;
@@ -1943,7 +1947,7 @@ function buildFeasibilityCoverParagraphs(payload, feasibility) {
   const constructionUnit = String(projectInfo.constructionUnit || '').trim();
   const preparationUnit = String(options.preparationUnit || constructionUnit || '可行性研究报告编制中心').trim();
   const documentCode = String(options.documentCode || '').trim();
-  return [
+  const paragraphs = [
     paragraph(
       [textRun(String(options.securityLevel || '').trim() || '内部资料 / 普通', { bold: true, size: 20, color: '666666' })],
       { alignment: AlignmentType.RIGHT, after: 600 },
@@ -1960,24 +1964,40 @@ function buildFeasibilityCoverParagraphs(payload, feasibility) {
       [textRun(`（所属行业：${String(projectInfo.industry || '').trim() || '国家标准大纲'}）`, { italics: true, size: 22, color: '666666' })],
       { alignment: AlignmentType.CENTER, after: 2000 },
     ),
-    paragraph(
-      [textRun(`项目建设单位：${constructionUnit}`, { size: 24, bold: true })],
-      { alignment: AlignmentType.CENTER, after: 180 },
-    ),
+  ];
+
+  // 封面空值口径：建设单位 / 识别编号 为空时整行跳过（附表数据单元格用「—」占位，
+  // 封面只留标签的空行更像版式残缺，跳过更干净）。
+  if (constructionUnit) {
+    paragraphs.push(
+      paragraph(
+        [textRun(`项目建设单位：${constructionUnit}`, { size: 24, bold: true })],
+        { alignment: AlignmentType.CENTER, after: 180 },
+      ),
+    );
+  }
+  paragraphs.push(
     paragraph(
       [textRun(`报告编制单位：${preparationUnit}`, { size: 24 })],
       { alignment: AlignmentType.CENTER, after: 180 },
     ),
-    paragraph(
-      [textRun(`文档识别编号：${documentCode}`, { size: 22, color: '666666' })],
-      { alignment: AlignmentType.CENTER, after: 180 },
-    ),
+  );
+  if (documentCode) {
+    paragraphs.push(
+      paragraph(
+        [textRun(`文档识别编号：${documentCode}`, { size: 22, color: '666666' })],
+        { alignment: AlignmentType.CENTER, after: 180 },
+      ),
+    );
+  }
+  paragraphs.push(
     paragraph(
       [textRun(`编制出版日期：${formatFeasibilityYearMonth()}`, { size: 22, color: '666666' })],
       { alignment: AlignmentType.CENTER, after: 400 },
     ),
-    pageBreakParagraph(),
-  ];
+  );
+  paragraphs.push(pageBreakParagraph());
+  return paragraphs;
 }
 
 function buildFeasibilityNotesParagraphs(payload, feasibility) {

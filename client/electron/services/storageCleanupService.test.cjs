@@ -108,6 +108,22 @@ test('sweepAgedStartupArtifacts 不再清扫 imported-images（活跃图片批�
   assert.ok(fs.existsSync(path.join(app.getPath('userData'), 'logs', 'fresh-ai.log')));
 });
 
+test('sweepAgedStartupArtifacts 按 mtime 锚点清扫文档解析缓存超龄孤儿', () => {
+  const tmp = makeTmpDir();
+  const app = makeFakeApp(path.join(tmp, 'userData'));
+  const now = Date.now();
+  const cacheDir = path.join(app.getPath('userData'), 'cache', 'parse-cache');
+  // 源文件改动后旧指纹成孤儿：40 天前写入的应被 30 天清扫删除
+  writeFileWithMtime(path.join(cacheDir, 'stale-orphan.md'), now - 40 * DAY);
+  // 近期仍在复用的缓存保留
+  writeFileWithMtime(path.join(cacheDir, 'fresh.md'), now - 1 * 3600 * 1000);
+
+  sweepAgedStartupArtifacts(app);
+
+  assert.ok(!fs.existsSync(path.join(cacheDir, 'stale-orphan.md')), '超龄孤儿缓存必须被清扫');
+  assert.ok(fs.existsSync(path.join(cacheDir, 'fresh.md')), '近期缓存必须保留');
+});
+
 // ---- collectGeneratedImageReferences：共享引用收集 ----
 
 test('collectGeneratedImageReferences 收集根级与子目录相对路径并解码', () => {

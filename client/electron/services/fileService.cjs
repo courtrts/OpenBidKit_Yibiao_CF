@@ -1,11 +1,14 @@
 const fs = require('node:fs/promises');
+// 缓存键依赖同步 stat：fs 是 promises 实例没有 statSync/existsSync，误用会把
+// TypeError 吞进 try → localParseCachePath 恒返 null → 整个解析缓存永久空转
+const fsSync = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { dialog } = require('electron');
 const AdmZip = require('adm-zip');
 const { formatDocumentParseError, isLibreOfficeMissingError, normalizeDocumentParseError } = require('./documentParseErrors.cjs');
 const { compactLogError, createDeveloperLogger, textMetrics } = require('../utils/developerLog.cjs');
-const { getImportedImagesDir } = require('../utils/paths.cjs');
+const { getImportedImagesDir, getLocalParseCacheDir } = require('../utils/paths.cjs');
 
 const parserLabels = {
   local: '本地解析',
@@ -220,7 +223,7 @@ async function pollMineruAgent(taskId, fileName, baseUrl) {
     if (data.state === 'failed') {
       throw new Error(`MinerU-Agent 解析失败：${data.err_msg || '未知错误'}${data.err_code ? ` (${data.err_code})` : ''}`);
     }
-    console.log(`WAIT ${fileName}: ${data.state || 'unknown'}`);
+    // 轮询状态细节不进主进程 console：开发者日志已记录 started/completed+duration
     await sleep(intervalMs);
   }
 
@@ -304,7 +307,6 @@ async function pollMineruAccurate(token, batchId, fileName, baseUrl) {
     if (item?.state === 'failed') {
       throw new Error(`MinerU 精准解析失败：${item.err_msg || '未知错误'}`);
     }
-    console.log(`WAIT ${fileName}: ${item?.state || 'unknown'}`);
     await sleep(intervalMs);
   }
 
@@ -440,6 +442,10 @@ function parseDataUrl(value) {
   return { mime: match[1], buffer: Buffer.from(match[2], 'base64') };
 }
 
+// 远程图片（文档内引用的外部图）上限：整张进主进程内存再落盘，
+// 超大图会造成内存尖峰；超过上限放弃该图引用（与加载失败的 null 语义一致）
+const remoteImageMaxBytes = 50 * 1024 * 1024;
+
 async function loadRemoteImage(url) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), remoteImageTimeoutMs);
@@ -448,7 +454,26 @@ async function loadRemoteImage(url) {
     if (!response.ok) return null;
     const contentType = response.headers.get('content-type') || '';
     if (contentType && !/^image\//i.test(contentType)) return null;
-    return { buffer: Buffer.from(await response.arrayBuffer()), mime: contentType };
+    const declaredLength = Number(response.headers.get('content-length') || 0);
+    if (declaredLength > remoteImageMaxBytes) return null;
+    // content-length 可能撒谎：流式分块读取再校验一次真实字节数
+    const reader = response.body.getReader();
+    const chunks = [];
+    let totalBytes = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > remoteImageMaxBytes) {
+        await reader.cancel().catch(() => undefined);
+        return null;
+      }
+      chunks.push(value);
+    }
+    return {
+      buffer: Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))),
+      mime: contentType,
+    };
   } finally {
     clearTimeout(timeout);
   }
@@ -568,25 +593,25 @@ async function replaceMatchesAsync(text, pattern, createReplacement) {
 // 只存图片改写前的文本；输出超过 5MB 不缓存（读取收益低于占用成本）。
 function localParseCachePath(app, filePath) {
   let stat = null;
-  try { stat = fs.statSync(filePath); } catch { return null; }
+  try { stat = fsSync.statSync(filePath); } catch { return null; }
   const key = crypto.createHash('sha1').update(`${filePath}|${stat.size}|${stat.mtimeMs}`).digest('hex');
-  return path.join(app.getPath('userData'), 'cache', 'parse-cache', `${key}.md`);
+  return path.join(getLocalParseCacheDir(app), `${key}.md`);
 }
 
 async function withLocalParseCache(app, filePath, produce) {
   let cacheFile = null;
   try { cacheFile = localParseCachePath(app, filePath); } catch { cacheFile = null; }
-  if (cacheFile && fs.existsSync(cacheFile)) {
+  if (cacheFile && fsSync.existsSync(cacheFile)) {
     try {
-      const cached = await fsp.readFile(cacheFile, 'utf-8');
+      const cached = await fs.readFile(cacheFile, 'utf-8');
       if (cached) return cached;
     } catch { /* 缓存损坏按未命中处理 */ }
   }
   const markdown = await produce();
   if (cacheFile && markdown && markdown.length <= 5 * 1024 * 1024) {
     try {
-      await fsp.mkdir(path.dirname(cacheFile), { recursive: true });
-      await fsp.writeFile(cacheFile, markdown, 'utf-8');
+      await fs.mkdir(path.dirname(cacheFile), { recursive: true });
+      await fs.writeFile(cacheFile, markdown, 'utf-8');
     } catch { /* 缓存写入失败不影响解析结果 */ }
   }
   return markdown;
@@ -626,8 +651,11 @@ async function parseDocumentWithConfig(app, filePath, config, options = {}) {  c
       markdown = await parseWithMineruAccurate(filePath, config.components?.file_parser?.mineru_token || '', parseOptions);
     } else {
       // 本地解析结果按文件内容指纹缓存：同一份文件反复导入免重复解析（本地解析会阻塞主进程）。
-      // 仅缓存图片改写前的原始 markdown，改写仍按本次运行的资产上下文执行，不带过期引用。
-      markdown = await withLocalParseCache(app, filePath, async () => parseLocalDocument(filePath, parseOptions));
+      // 仅缓存无图片文本路径：preserveImages 路径的 markdown 携带本次运行的资产批次 URL
+      //（查重正文提取即该路径），缓存会让后续运行复用已过期/已被业务清理的批次引用。
+      markdown = preserveImages
+        ? await parseLocalDocument(filePath, parseOptions)
+        : await withLocalParseCache(app, filePath, async () => parseLocalDocument(filePath, parseOptions));
       markdown = preserveImages ? await rewriteMarkdownImages(markdown, assets, { localBaseDir: path.dirname(filePath) }) : stripMarkdownImages(markdown);
     }
   } catch (error) {
@@ -721,7 +749,9 @@ const config = configStore ? configStore.load() : { components: { file_parser: {
     }
 
     if (!parsedDocuments.length) {
-      return { success: false, message: errors[0] || '未提取到有效 Markdown 内容，请检查文件内容', documents: [] };
+      // 全失败时拼接全部逐文件原因：调用方把该 message 直接透传用户可见层，
+      // 只返回第一条会让用户看不到其余文件的失败原因
+      return { success: false, message: errors.join('；') || '未提取到有效 Markdown 内容，请检查文件内容', documents: [] };
     }
 
     const fallbackToLocal = parsedDocuments.some((item) => item.fallback_to_local);
@@ -809,9 +839,10 @@ const config = configStore ? configStore.load() : { components: { file_parser: {
       }
 
       if (!parsedDocuments.length) {
+        // 与招标导入同口径：全失败时拼接全部逐文件原因
         return {
           success: false,
-          message: errors[0] || '未提取到有效 Markdown 内容，请检查文件内容',
+          message: errors.join('；') || '未提取到有效 Markdown 内容，请检查文件内容',
           documents: [],
         };
       }

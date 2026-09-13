@@ -3,6 +3,7 @@ const path = require('node:path');
 const {
   getAgentRuntimeDir,
   getGeneratedImagesDir,
+  getLocalParseCacheDir,
   getWorkspaceDir,
 } = require('../utils/paths.cjs');
 const { getMermaidCacheDir } = require('../utils/mermaidCache.cjs');
@@ -242,6 +243,9 @@ function sweepAgedStartupArtifacts(app) {
   const targets = [
     { label: 'AI/开发日志', dir: path.join(app.getPath('userData'), 'logs'), maxAge: 14 * day },
     { label: 'mermaid 渲染缓存', dir: getMermaidCacheDir(app), maxAge: 30 * day },
+    // 文档解析缓存（fileService）：键随源文件 size/mtime 变化，源文件改动后旧键成孤儿，
+    // 按 mtime 锚点 30 天清扫防止无限膨胀（与 mermaid 缓存同口径）
+    { label: '文档解析缓存', dir: getLocalParseCacheDir(app), maxAge: 30 * day },
   ];
   for (const { label, dir, maxAge } of targets) {
     try {

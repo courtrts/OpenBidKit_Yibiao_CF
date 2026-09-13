@@ -114,6 +114,12 @@ function getImportedImagesDir(app) {
   return path.join(getWorkspaceDir(app), 'imported-images');
 }
 
+/** 本地文档解析缓存目录（fileService）：workspace 外的 userData 缓存区，
+ *  由 storageCleanupService 启动时按 mtime 锚点清扫（30 天）。 */
+function getLocalParseCacheDir(app) {
+  return path.join(getUserDataPath(app), 'cache', 'parse-cache');
+}
+
 function getKnowledgeBaseDir(app) {
   return path.join(getWorkspaceDir(app), 'knowledge-base');
 }
@@ -208,6 +214,7 @@ module.exports = {
   getFeasibilityReportSourcesDir,
   getGeneratedImagesDir,
   getImportedImagesDir,
+  getLocalParseCacheDir,
   getKnowledgeBaseDir,
   getLicenseFilePath,
   getOpenXmlHelperDebugExecutablePath,

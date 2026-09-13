@@ -676,9 +676,17 @@ function createFeasibilityReportStore({ app, db, fileService, taskLogStore, agen
       clearDownstreamFromMaterials();
     });
     transaction();
+    const messageParts = [result.message || `已导入 ${sourceFiles.length} 份资料`];
+    // 部分成功：result.message 只有「失败 N 份」计数（fileService 拼接），逐文件原因在
+    // result.errors——与招标分析/查废导入的 appendImportFailureParts 口径一致，
+    // 把「文件名：原因」拼进用户可见消息（计数已在 message 内，不重复计）
+    const failedParts = (Array.isArray(result?.errors) ? result.errors : [])
+      .map((item) => String(item || '').trim())
+      .filter(Boolean);
+    if (failedParts.length) messageParts.push(failedParts.join('；'));
     return {
       success: true,
-      message: result.message || `已导入 ${sourceFiles.length} 份资料`,
+      message: messageParts.join('，'),
       sourceFiles,
     };
   }

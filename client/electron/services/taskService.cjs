@@ -1287,7 +1287,8 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
     const recoveredTask = {
       ...bidAnalysisTask,
       status: 'error',
-      progress: 100,
+      // 失败进度封顶 99：与其余恢复分支口径一致，error 态不显示 100%（原硬编码 100 会被误读为"已完成"）
+      progress: Math.max(0, Math.min(99, Number(bidAnalysisTask.progress || 0) || 0)),
       pause_requested: false,
       error: message,
       logs: logs.includes(message) ? logs : [...logs, message],

@@ -7,6 +7,7 @@ const { getKnowledgeBaseDir } = require('../utils/paths.cjs');
 const { deleteImportedImageBatches } = require('../utils/importedImages.cjs');
 const { enqueueJsonLine, enqueueLogRemoval } = require('../utils/silentFileLog.cjs');
 const { splitUserTextByContextLimit } = require('../utils/userTextSplitter.cjs');
+const { userFacingTaskError } = require('../utils/taskErrorText.cjs');
 const { parseDocumentWithConfig } = require('./fileService.cjs');
 
 const supportedExtensions = new Set(['.doc', '.docx', '.wps', '.pdf', '.md', '.markdown', '.xls', '.xlsx']);
@@ -1516,7 +1517,10 @@ function createKnowledgeBaseService({ app, aiService, configStore, knowledgeBase
         message: error.message || String(error),
         stack: error.stack,
       });
-      updateDocument(documentId, { status: 'error', progress: 100, message: error.message || '处理失败', error: error.message || '处理失败' }, webContents);
+      // 失败进度封顶 99：error 态显示 100% 会被误读为"已完成"；
+      // 用户可见错误统一净化（原始报错可能含文件路径/底层解析细节，debugLog 诊断通道已保留原始）
+      const failedMessage = userFacingTaskError(error, '处理失败');
+      updateDocument(documentId, { status: 'error', progress: 99, message: failedMessage, error: failedMessage }, webContents);
     } finally {
       activePreparations.delete(documentId);
       debugLog(documentId, 'prepare:finish');
@@ -2085,11 +2089,13 @@ function createKnowledgeBaseService({ app, aiService, configStore, knowledgeBase
         message: error.message || String(error),
         stack: error.stack,
       });
+      // 失败进度封顶 99 + 用户可见错误统一净化（同 prepare:error 口径）
+      const matchFailedMessage = userFacingTaskError(error, '匹配失败');
       updateDocument(documentId, {
         status: 'error',
-        progress: 100,
-        message: error.message || '匹配失败',
-        error: error.message || '匹配失败',
+        progress: 99,
+        message: matchFailedMessage,
+        error: matchFailedMessage,
       }, webContents);
     } finally {
       activeMatches.delete(documentId);

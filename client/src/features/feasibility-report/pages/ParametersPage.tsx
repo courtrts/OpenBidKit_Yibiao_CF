@@ -13,6 +13,7 @@ interface ParametersPageProps {
   onChange: (value: string) => void;
   onSave: () => Promise<void>;
   onStart: () => Promise<void>;
+  onCancel: (taskType: string) => Promise<void>;
 }
 
 function ParametersPage({
@@ -25,9 +26,11 @@ function ParametersPage({
   onChange,
   onSave,
   onStart,
+  onCancel,
 }: ParametersPageProps) {
   const { showToast } = useToast();
   const [progressCollapsed, setProgressCollapsed] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [nowTick, setNowTick] = useState(() => Date.now());
   const logListRef = useRef<HTMLDivElement | null>(null);
   const progressLogs = task?.logs || [];
@@ -66,8 +69,26 @@ function ParametersPage({
       showToast('当前没有可复制的内容', 'info');
       return;
     }
-    await navigator.clipboard.writeText(keyParametersMarkdown);
-    showToast('关键参数内容已复制', 'success');
+    try {
+      await navigator.clipboard.writeText(keyParametersMarkdown);
+      showToast('关键参数内容已复制', 'success');
+    } catch {
+      // 剪贴板可能因权限/焦点丢失拒绝写入，必须给出反馈而非静默失败
+      showToast('复制失败，请重试或手动选中内容复制', 'error');
+    }
+  };
+
+  const handleCancelTask = async () => {
+    if (!onCancel || cancelling || !task?.type) return;
+    setCancelling(true);
+    try {
+      await onCancel(task.type);
+      showToast('已发送取消请求，正在停止任务…', 'info');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '取消任务失败，请重试', 'error');
+    } finally {
+      setCancelling(false);
+    }
   };
 
   return (
@@ -79,6 +100,18 @@ function ParametersPage({
           <p>请重点核对“【待补充】”和“【待确认】”。保存修改后，旧正文会被清空以避免使用过期参数。本步骤不自动计算 NPV、IRR、回收期。</p>
         </div>
         <div className="global-facts-command-actions">
+          {running && task?.type ? (
+            <button
+              type="button"
+              className="secondary-action"
+              onClick={() => { void handleCancelTask(); }}
+              disabled={cancelling}
+              aria-label="取消关键参数生成任务"
+              title="停止当前正在运行的关键参数生成任务"
+            >
+              {cancelling ? '取消中…' : '取消生成'}
+            </button>
+          ) : null}
           <button type="button" className="primary-action" onClick={() => { void onStart(); }} disabled={running || !hasOutline}>
             {running ? '生成中...' : hasContent ? '重新生成' : '生成关键参数'}
           </button>

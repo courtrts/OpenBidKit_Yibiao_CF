@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { MarkdownEditor, MarkdownFullscreenViewer, MarkdownRenderer, ProgressBar, useToast } from '../../../shared/ui';
 import type { FeasibilityBackgroundTaskState } from '../types';
 
@@ -11,10 +11,12 @@ interface AnalysisPageProps {
   onChange: (value: string) => void;
   onSave: () => Promise<void>;
   onStart: () => Promise<void>;
+  onCancel: (taskType: string) => Promise<void>;
 }
 
-function AnalysisPage({ analysisMarkdown, task, running, saving, dirty, onChange, onSave, onStart }: AnalysisPageProps) {
+function AnalysisPage({ analysisMarkdown, task, running, saving, dirty, onChange, onSave, onStart, onCancel }: AnalysisPageProps) {
   const { showToast } = useToast();
+  const [cancelling, setCancelling] = useState(false);
   const progress = Number(task?.progress || 0);
   const progressLogs = task?.logs || [];
   const latestLog = progressLogs[progressLogs.length - 1] || '';
@@ -42,6 +44,19 @@ function AnalysisPage({ analysisMarkdown, task, running, saving, dirty, onChange
     }
   };
 
+  const handleCancelTask = async () => {
+    if (!onCancel || cancelling || !task?.type) return;
+    setCancelling(true);
+    try {
+      await onCancel(task.type);
+      showToast('已发送取消请求，正在停止任务…', 'info');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '取消任务失败，请重试', 'error');
+    } finally {
+      setCancelling(false);
+    }
+  };
+
   return (
     <div className="plan-step-body global-facts-page">
       <section className="global-facts-command-bar">
@@ -51,6 +66,18 @@ function AnalysisPage({ analysisMarkdown, task, running, saving, dirty, onChange
           <p>后台会按九个板块提取事实；无附件时按项目参数分析。</p>
         </div>
         <div className="global-facts-command-actions">
+          {running && task?.type ? (
+            <button
+              type="button"
+              className="secondary-action"
+              onClick={() => { void handleCancelTask(); }}
+              disabled={cancelling}
+              aria-label="取消资料分析任务"
+              title="停止当前正在运行的资料分析任务"
+            >
+              {cancelling ? '取消中…' : '取消分析'}
+            </button>
+          ) : null}
           <button type="button" className="primary-action" onClick={() => { void onStart(); }} disabled={running}>
             {running ? '分析中...' : hasContent ? '重新分析' : '开始分析'}
           </button>

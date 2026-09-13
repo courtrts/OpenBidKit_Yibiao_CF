@@ -107,6 +107,7 @@ function ContentPage({
   const [preview, setPreview] = useState(true);
   const [statsCollapsed, setStatsCollapsed] = useState(false);
   const [pausePending, setPausePending] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [savingChapter, setSavingChapter] = useState(false);
   const [exportFormat, setExportFormat] = useState<ExportFormatConfig>(() => withExportFormatDefaults(undefined));
   const leaves = useMemo(() => collectFeasibilityLeaves(outlineData?.outline || []), [outlineData]);
@@ -225,6 +226,22 @@ function ContentPage({
     }
   };
 
+  const handleCancelTask = async () => {
+    if (cancelling || !running) return;
+    const taskType = reviewing ? 'feasibility-human-writing' : 'feasibility-content';
+    setCancelling(true);
+    try {
+      await window.yibiao!.tasks.cancelFeasibilityTask({ type: taskType });
+      showToast(reviewing
+        ? '已发送取消请求，正在停止自然化审校…'
+        : '已发送取消请求，正在停止正文生成…', 'info');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : (reviewing ? '取消自然化审校失败' : '取消正文生成失败'), 'error');
+    } finally {
+      setCancelling(false);
+    }
+  };
+
   const handleGenerationButtonClick = () => {
     if (running) {
       void pauseContentGeneration();
@@ -314,6 +331,18 @@ function ContentPage({
           {pendingCount > 0 && <span><strong>{pendingCount}</strong> 待生成</span>}
         </div>
         <div className="content-generation-actions">
+          {running ? (
+            <button
+              type="button"
+              className="secondary-action"
+              onClick={() => { void handleCancelTask(); }}
+              disabled={cancelling || pausing}
+              aria-label={reviewing ? '取消自然化审校任务' : '取消正文生成任务'}
+              title={reviewing ? '停止当前正在运行的自然化审校任务' : '停止当前正在运行的正文生成任务'}
+            >
+              {cancelling ? '取消中…' : '取消'}
+            </button>
+          ) : null}
           <button
             type="button"
             className="primary-action"

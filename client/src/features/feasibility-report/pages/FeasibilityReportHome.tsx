@@ -655,6 +655,9 @@ function FeasibilityReportHome({ registerLeaveGuard, onSectionChange }: Feasibil
           onChange={setAnalysisDraft}
           onSave={saveAnalysis}
           onStart={startAnalysis}
+          onCancel={async (taskType) => {
+            await window.yibiao!.tasks.cancelFeasibilityTask({ type: taskType });
+          }}
         />
       )}
       {state.step === 'outline' && (
@@ -707,6 +710,9 @@ function FeasibilityReportHome({ registerLeaveGuard, onSectionChange }: Feasibil
             } catch (error) {
               showToast(error instanceof Error ? error.message : '启动关键参数生成失败', 'error');
             }
+          }}
+          onCancel={async (taskType) => {
+            await window.yibiao!.tasks.cancelFeasibilityTask({ type: taskType });
           }}
         />
       )}

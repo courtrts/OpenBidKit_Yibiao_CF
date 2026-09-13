@@ -324,6 +324,10 @@ function KnowledgeBasePage() {
     | null
   >(null);
   const [deletingConfirm, setDeletingConfirm] = useState(false);
+  // Electron 渲染进程不支持 window.prompt（调用返回 null 且仅控制台报错），
+  // 重命名走内联弹窗输入，否则「重命名」按钮点击后静默无效。
+  const [renameTarget, setRenameTarget] = useState<{ folderId: string; name: string } | null>(null);
+  const [renamingFolder, setRenamingFolder] = useState(false);
   const autoMatchingIdsRef = useRef(new Set<string>());
   const documentParseNoticeIdsRef = useRef(new Set<string>());
   const viewerRequestIdRef = useRef(0);
@@ -639,20 +643,32 @@ function KnowledgeBasePage() {
     }
   };
 
-  const renameFolder = async (folderId: string, currentName: string) => {
-    const name = window.prompt('请输入新的文件夹名称', currentName)?.trim();
-    if (!name || name === currentName) return;
+  const renameFolder = (folderId: string, currentName: string) => {
+    setRenameTarget({ folderId, name: currentName });
+  };
+
+  const confirmRenameFolder = async () => {
+    if (!renameTarget) return;
+    const name = renameTarget.name.trim();
+    if (!name) {
+      showToast('请输入文件夹名称', 'info');
+      return;
+    }
 
     try {
-      const folder = await window.yibiao?.knowledgeBase.renameFolder(folderId, name);
+      setRenamingFolder(true);
+      const folder = await window.yibiao?.knowledgeBase.renameFolder(renameTarget.folderId, name);
       if (!folder) return;
       setIndex((prev) => ({
         ...prev,
         folders: prev.folders.map((item) => (item.id === folder.id ? folder : item)),
       }));
+      setRenameTarget(null);
       showToast('文件夹已重命名', 'success');
     } catch (error) {
       showToast(error instanceof Error ? error.message : '重命名文件夹失败', 'error');
+    } finally {
+      setRenamingFolder(false);
     }
   };
 
@@ -1091,6 +1107,35 @@ function KnowledgeBasePage() {
         </main>
         </section>
       </div>
+
+      <AppDialog
+        open={Boolean(renameTarget)}
+        onOpenChange={(open) => !open && !renamingFolder && setRenameTarget(null)}
+        kicker="知识库"
+        title="重命名文件夹"
+        actions={(
+          <>
+            <button type="button" className="secondary-action" onClick={() => setRenameTarget(null)} disabled={renamingFolder}>取消</button>
+            <button type="button" className="primary-action" onClick={() => { void confirmRenameFolder(); }} disabled={renamingFolder || !renameTarget?.name.trim()}>
+              {renamingFolder ? '正在保存...' : '保存'}
+            </button>
+          </>
+        )}
+      >
+        <input
+          autoFocus
+          value={renameTarget?.name || ''}
+          onChange={(event) => setRenameTarget((prev) => (prev ? { ...prev, name: event.target.value } : prev))}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && !renamingFolder && renameTarget?.name.trim()) {
+              void confirmRenameFolder();
+            }
+          }}
+          placeholder="输入新的文件夹名称"
+          aria-label="新的文件夹名称"
+          disabled={renamingFolder}
+        />
+      </AppDialog>
 
       <AppDialog
         open={Boolean(deleteConfirm)}

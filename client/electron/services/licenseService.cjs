@@ -16,6 +16,8 @@ const PRODUCT_NAME = packageJson.build?.productName || '易标投标工具箱';
 const FINGERPRINT_VERSION = '2026-01';
 const SIGNATURE_ALGORITHM = 'ECDSA_P256_SHA256';
 const OFFLINE_LICENSE_CODE_PREFIX = 'YB-LICENSE-';
+// 授权刷新总超时：默认配置下 undici 最长可空等 5 分钟，会拖慢授权提醒弹窗
+const LICENSE_REFRESH_TIMEOUT_MS = 30000;
 
 const resourcesDir = path.join(__dirname, '..', 'resources');
 const publicKeyPath = path.join(resourcesDir, 'license-public-key.json');
@@ -322,7 +324,7 @@ function statusFromPayload(payload, status, extra = {}) {
   });
 }
 
-function createLicenseService({ app, configStore }) {
+function createLicenseService({ app, configStore, refreshTimeoutMs = LICENSE_REFRESH_TIMEOUT_MS }) {
   const licenseFile = getLicenseFilePath(app);
   loadClockWatermark(app);
   advanceClockWatermark();
@@ -395,7 +397,10 @@ function createLicenseService({ app, configStore }) {
       ? !isOfflineLicenseBuildCurrent(payload, buildAttestation)
       : !isLicenseBuildCurrent(payload, buildAttestation);
     if (payload.clientId !== runtimeContext.clientId || (payload.machineFingerprintHash && payload.machineFingerprintHash !== runtimeContext.machineFingerprintHash)) {
-      invalidateLocalLicense(envelope, 'license_machine_mismatch');
+      // 已标记失效的授权避免每次状态查询重复写盘
+      if (!envelope.local?.invalidated) {
+        invalidateLocalLicense(envelope, 'license_machine_mismatch');
+      }
       currentStatus = statusFromPayload(payload, 'machine_mismatch', {
         ...base,
         buildChanged,
@@ -456,12 +461,24 @@ function createLicenseService({ app, configStore }) {
       buildAttestation,
     };
 
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), refreshTimeoutMs);
     try {
-      const response = await fetch(LICENSE_ENDPOINT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
+      let response;
+      try {
+        response = await fetch(LICENSE_ENDPOINT, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+      } catch (error) {
+        // 请求层错误（超时/断网）统一固定文案；端点与 OS 细节只进开发者日志
+        console.error('[license] 授权刷新请求失败', error?.message || String(error));
+        throw new Error(error?.name === 'AbortError'
+          ? '授权服务响应超时，请检查网络后重试'
+          : '授权服务连接失败，请检查网络后重试');
+      }
       const data = await response.json().catch(() => null);
       if (!response.ok || !data || data.code !== 0 || !data.license) {
         throw new Error(data?.message || `授权刷新失败：${response.status}`);
@@ -487,6 +504,8 @@ function createLicenseService({ app, configStore }) {
         lastCheckedAt: nowIso(),
       };
       return currentStatus;
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -587,7 +606,14 @@ function createLicenseService({ app, configStore }) {
       };
     }
 
-    const content = fs.readFileSync(result.filePaths[0], 'utf-8');
+    let content;
+    try {
+      content = fs.readFileSync(result.filePaths[0], 'utf-8');
+    } catch (error) {
+      // 文件被占用/无权限等 OS 错误：不向用户可见错误泄露本机路径
+      console.error('[license] 读取离线授权文件失败', error?.message || String(error));
+      throw new Error('无法读取所选授权文件，请确认文件未被占用且可正常访问');
+    }
     return activateOfflineLicenseText(content);
   }
 

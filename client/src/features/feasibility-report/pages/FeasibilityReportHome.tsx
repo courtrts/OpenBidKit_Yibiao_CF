@@ -286,6 +286,10 @@ function FeasibilityReportHome({ registerLeaveGuard, onSectionChange }: Feasibil
       }
       applyLoadedState(await window.yibiao!.feasibilityReport.loadState());
       showToast(result.message || '资料已导入', 'success');
+    } catch (error) {
+      // 与本页其余操作同口径：导入链路（取消后台任务/落库/磁盘）throw 不能成为
+      // unhandled rejection 让 busy 静默复位、用户零反馈
+      showToast(error instanceof Error ? error.message : '导入资料失败', 'error');
     } finally {
       setBusyImport(false);
     }

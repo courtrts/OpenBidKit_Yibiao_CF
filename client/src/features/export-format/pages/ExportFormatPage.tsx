@@ -1,7 +1,7 @@
 ﻿import * as Dialog from '@radix-ui/react-dialog';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { trackPageView } from '../../../shared/analytics/analytics';
-import { AppSwitch, FloatingToolbar, ProgressBar, useToast } from '../../../shared/ui';
+import { AppDialog, AppSwitch, FloatingToolbar, ProgressBar, useToast } from '../../../shared/ui';
 import type { FloatingToolbarGroup } from '../../../shared/ui';
 import type {
   BodyTextStyleConfig,
@@ -299,6 +299,7 @@ function ExportFormatPage({ mode = 'create', templateId = null, onBack }: Export
   const [loadError, setLoadError] = useState('');
   const [exportProgress, setExportProgress] = useState<ExportProgressState>(initialExportProgress);
   const [previewFullscreenOpen, setPreviewFullscreenOpen] = useState(false);
+  const [confirmLeaveOpen, setConfirmLeaveOpen] = useState(false);
   const [systemFonts, setSystemFonts] = useState<string[]>([]);
 
   useEffect(() => {
@@ -603,6 +604,16 @@ function ExportFormatPage({ mode = 'create', templateId = null, onBack }: Export
     });
   }, []);
 
+  // 脏态返回拦截：模板样式修改未保存时返回页面会静默丢失修改，
+  // 必须先经确认弹窗（加载失败态无脏内容，保持直接返回）。
+  const handleBackRequest = useCallback(() => {
+    if (isDirty) {
+      setConfirmLeaveOpen(true);
+      return;
+    }
+    onBack?.();
+  }, [isDirty, onBack]);
+
   const resetToolbarGroup: FloatingToolbarGroup = {
     id: 'template-reset',
     actions: [
@@ -648,7 +659,7 @@ function ExportFormatPage({ mode = 'create', templateId = null, onBack }: Export
     ? {
         id: 'template-navigation',
         actions: [
-          { id: 'back', label: '返回我的模板', variant: 'secondary', onClick: onBack },
+          { id: 'back', label: '返回我的模板', variant: 'secondary', onClick: handleBackRequest },
         ],
       }
     : null;
@@ -949,7 +960,12 @@ function ExportFormatPage({ mode = 'create', templateId = null, onBack }: Export
           const numExample = headingNumberExample(index, heading);
           return (
             <div key={index} className={`export-format-heading-card${isExpanded ? ' is-expanded' : ''}`}>
-              <button type="button" className="export-format-heading-header" onClick={() => toggleHeading(index)}>
+              <button
+                type="button"
+                className="export-format-heading-header"
+                onClick={() => toggleHeading(index)}
+                aria-expanded={isExpanded}
+              >
                 <span className="export-format-heading-label">{HEADING_LEVEL_LABELS[index]}</span>
                 <span className="export-format-heading-example">{numExample || '无编号'}</span>
                 <span className={`export-format-heading-chevron${isExpanded ? ' is-open' : ''}`}>▸</span>
@@ -1307,6 +1323,19 @@ function ExportFormatPage({ mode = 'create', templateId = null, onBack }: Export
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
+      <AppDialog
+        open={confirmLeaveOpen}
+        onOpenChange={(open) => { if (!open) setConfirmLeaveOpen(false); }}
+        kicker="未保存的修改"
+        title="返回将丢弃未保存的修改？"
+        description="当前模板的样式修改尚未保存，返回后无法恢复。"
+        actions={(
+          <>
+            <button type="button" className="secondary-action" onClick={() => setConfirmLeaveOpen(false)}>继续编辑</button>
+            <button type="button" className="danger-action" onClick={() => { setConfirmLeaveOpen(false); onBack?.(); }}>丢弃修改并返回</button>
+          </>
+        )}
+      />
       <FloatingToolbar groups={toolbarGroups} label="模板设置保存工具条" />
     </div>
   );

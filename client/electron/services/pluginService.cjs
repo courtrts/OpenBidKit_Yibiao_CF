@@ -5,10 +5,23 @@ const https = require('https');
 const AdmZip = require('adm-zip');
 const { createPluginContext } = require('./pluginContext.cjs');
 const { assertAllowedUpdateUrl } = require('./updateService.cjs');
+const { getPluginDownloadTempDir } = require('../utils/paths.cjs');
+const { userFacingTaskError } = require('../utils/taskErrorText.cjs');
 
 const PLUGIN_MARKET_URL = 'https://toubiao.ztok.dpdns.org/plugins';
 const PLUGIN_DOWNLOAD_URL = `${PLUGIN_MARKET_URL}/download`;
 const PLUGIN_STATE_FILE = 'plugin-states.json';
+
+// 插件 ID 格式：与离线安装校验、插件配置 IPC 层（pluginIpc PLUGIN_CONFIG_ID_PATTERN）同一口径。
+// 走市场/IPC 的 pluginId（含外部市场接口返回的条目）拼路径前必须先过格式检查，
+// 防止 `..` 越出 plugins 目录造成任意目录删除（卸载/安装替换）或加载本机任意模块（启用）。
+const PLUGIN_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
+
+function assertValidPluginId(pluginId) {
+  if (!PLUGIN_ID_PATTERN.test(String(pluginId || ''))) {
+    throw new Error('插件 ID 格式不正确');
+  }
+}
 
 /** 比较正式版版本号，返回值大于 0 表示前者版本更高。 */
 function comparePluginVersions(a, b) {
@@ -197,12 +210,24 @@ class PluginService {
     }
 
     return new Promise((resolve, reject) => {
+      // 底层网络错误（DNS/超时/流损坏）不再透传 raw error.message：
+      // 其中携带内部端点与协议细节，统一转固定文案，原始错误只进开发者日志
+      let settled = false;
+      const fail = (error) => {
+        if (settled) return;
+        settled = true;
+        reject(error);
+      };
+      const failNetwork = (error) => {
+        console.error('[plugin-service] 插件市场请求失败:', error?.message || String(error));
+        fail(new Error('插件市场连接失败，请检查网络后重试'));
+      };
       // 与 downloadPlugin 同款 60s 超时：市场服务器"已连接不响应"时若无限挂起，
       // 安装/更新/批量升级的操作锁会被永久占用，只能重启应用恢复。
       const request = https.get(PLUGIN_MARKET_URL, (res) => {
         let data = '';
         // chunked 流损坏等流级错误要有监听者，否则成为未捕获异常拖崩主进程
-        res.on('error', reject);
+        res.on('error', failNetwork);
         res.on('data', (chunk) => { data += chunk; });
         res.on('end', () => {
           try {
@@ -212,17 +237,19 @@ class PluginService {
               this.marketCacheTime = now;
               resolve(json.plugins);
             } else {
-              reject(new Error('插件市场响应格式错误'));
+              fail(new Error('插件市场响应格式错误'));
             }
           } catch (error) {
-            reject(error);
+            console.error('[plugin-service] 插件市场响应解析失败:', error?.message || String(error));
+            fail(new Error('插件市场响应格式错误'));
           }
         });
       });
       request.setTimeout(60000, () => {
-        request.destroy(new Error('插件市场请求超时（60 秒）'));
+        request.destroy();
+        fail(new Error('插件市场请求超时（60 秒）'));
       });
-      request.on('error', reject);
+      request.on('error', failNetwork);
     });
   }
 
@@ -331,7 +358,8 @@ class PluginService {
       throw error;
     }
 
-    const tempDir = path.join(this.app.getPath('temp'), 'yibiao-plugins');
+    // 下载临时目录走共享 helper：与启动清扫目标（storageCleanupService）同源，防路径漂移
+    const tempDir = getPluginDownloadTempDir();
     fs.mkdirSync(tempDir, { recursive: true });
 
     // 临时文件名加随机前缀，避免两个同名插件包互相覆盖
@@ -341,11 +369,17 @@ class PluginService {
     return new Promise((resolve, reject) => {
       let settled = false;
       let request = null;
+      let fileStream = null;
       const fail = (error) => {
         if (settled) return;
         settled = true;
         if (request) {
           try { request.destroy(); } catch {}
+        }
+        // 先销毁写入流：Windows 上句柄未关闭时 rmSync 删不掉文件（错误被吞），
+        // 每次中断下载都会泄漏一份至多 200MB 的临时包
+        if (fileStream) {
+          try { fileStream.destroy(); } catch {}
         }
         try { fs.rmSync(zipPath, { force: true }); } catch {}
         reject(error);
@@ -375,6 +409,7 @@ class PluginService {
             return;
           }
           const file = fs.createWriteStream(zipPath);
+          fileStream = file;
           // 慢速滴流可绕过空闲超时无限写盘：超过 200MB 视为异常流，中止并清理
           const MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024;
           let receivedBytes = 0;
@@ -440,6 +475,7 @@ class PluginService {
    * 安装插件
    */
   async installPlugin(pluginId, ownerToken) {
+    assertValidPluginId(pluginId);
     const lock = this.acquirePluginOperation(pluginId, '安装', ownerToken);
     try {
       // 从服务器获取插件信息
@@ -473,7 +509,7 @@ class PluginService {
         // 校验通过才替换旧目录
         const pluginDir = path.join(pluginsDir, pluginId);
         if (this.plugins.has(pluginId)) {
-          await this.disablePlugin(pluginId);
+          await this.disablePlugin(pluginId, lock.token);
         }
         this.clearPluginModuleCache(pluginDir);
         if (fs.existsSync(pluginDir)) {
@@ -510,7 +546,8 @@ class PluginService {
       console.log('[plugin-service] 插件安装成功:', pluginId);
     } catch (error) {
       console.error('[plugin-service] 安装插件失败:', error);
-      throw error;
+      // 用户可见错误走统一净化（原始错误可能携带本地路径等内部细节，诊断留在日志）
+      throw new Error(userFacingTaskError(error, '插件安装失败'));
     } finally {
       this.releasePluginOperation(pluginId, lock);
     }
@@ -559,7 +596,7 @@ class PluginService {
         const wasEnabled = Boolean(previousManifest) && previousState.enabled === true;
         const shouldRestoreEnabledState = wasEnabled && hasMain;
         if (this.plugins.has(pluginId)) {
-          await this.disablePlugin(pluginId);
+          await this.disablePlugin(pluginId, lock.token);
         }
         this.clearPluginModuleCache(pluginDir);
         if (fs.existsSync(pluginDir)) {
@@ -580,7 +617,7 @@ class PluginService {
         this.savePluginStates();
 
         if (shouldRestoreEnabledState) {
-          await this.enablePlugin(pluginId);
+          await this.enablePlugin(pluginId, lock.token);
         }
 
         // 清除更新失败标记
@@ -600,7 +637,7 @@ class PluginService {
       }
     } catch (error) {
       console.error('[plugin-service] 离线安装插件失败:', error);
-      throw error;
+      throw new Error(userFacingTaskError(error, '离线插件安装失败'));
     } finally {
       if (stagingDir && fs.existsSync(stagingDir)) {
         fs.rmSync(stagingDir, { recursive: true, force: true });
@@ -612,11 +649,12 @@ class PluginService {
    * 卸载插件
    */
   async uninstallPlugin(pluginId, ownerToken) {
+    assertValidPluginId(pluginId);
     const lock = this.acquirePluginOperation(pluginId, '卸载', ownerToken);
     try {
       // 先禁用
       if (this.plugins.has(pluginId)) {
-        await this.disablePlugin(pluginId);
+        await this.disablePlugin(pluginId, lock.token);
       }
 
       const pluginDir = path.join(this.getPluginsDir(), pluginId);
@@ -634,7 +672,7 @@ class PluginService {
       console.log('[plugin-service] 插件已卸载:', pluginId);
     } catch (error) {
       console.error('[plugin-service] 卸载插件失败:', error);
-      throw error;
+      throw new Error(userFacingTaskError(error, '插件卸载失败'));
     } finally {
       this.releasePluginOperation(pluginId, lock);
     }
@@ -666,7 +704,11 @@ class PluginService {
   /**
    * 启用插件
    */
-  async enablePlugin(pluginId) {
+  async enablePlugin(pluginId, ownerToken) {
+    assertValidPluginId(pluginId);
+    // 启用会重新 require 插件模块并执行 activate：与安装/卸载/更新共享同一把
+    // 插件操作锁，避免目录正被替换时加载到半截模块、activate 副作用无人回收
+    const lock = this.acquirePluginOperation(pluginId, '启用', ownerToken);
     try {
       if (this.plugins.has(pluginId)) {
         return;
@@ -712,32 +754,40 @@ class PluginService {
       console.log('[plugin-service] 插件已启用:', pluginId);
     } catch (error) {
       console.error('[plugin-service] 启用插件失败:', error);
-      throw error;
+      // require/activate 的 raw 错误可能携带本机模块路径，用户可见文案走统一净化
+      throw new Error(userFacingTaskError(error, '插件启用失败'));
+    } finally {
+      this.releasePluginOperation(pluginId, lock);
     }
   }
 
   /**
    * 禁用插件
    */
-  async disablePlugin(pluginId) {
+  async disablePlugin(pluginId, ownerToken) {
+    // 与启用/安装/卸载/更新同锁：更新流程（卸载→安装）进行中禁用会把实例
+    // 从运行表删掉、状态改禁用，与升级的恢复阶段互相踩
+    const lock = this.acquirePluginOperation(pluginId, '禁用', ownerToken);
     try {
       const plugin = this.plugins.get(pluginId);
       if (plugin && typeof plugin.module.deactivate === 'function') {
         await plugin.module.deactivate();
       }
-      
+
       this.plugins.delete(pluginId);
-      
+
       // 更新状态
       if (this.pluginStates[pluginId]) {
         this.pluginStates[pluginId].enabled = false;
         this.savePluginStates();
       }
-      
+
       console.log('[plugin-service] 插件已禁用:', pluginId);
     } catch (error) {
       console.error('[plugin-service] 禁用插件失败:', error);
-      throw error;
+      throw new Error(userFacingTaskError(error, '插件禁用失败'));
+    } finally {
+      this.releasePluginOperation(pluginId, lock);
     }
   }
 
@@ -745,6 +795,7 @@ class PluginService {
    * 更新插件（删除重装）
    */
   async updatePlugin(pluginId) {
+    assertValidPluginId(pluginId);
     const lock = this.acquirePluginOperation(pluginId, '更新');
     let stage = '读取插件状态';
     this.updatingPlugins.add(pluginId);
@@ -752,6 +803,8 @@ class PluginService {
 
     try {
       const wasEnabled = this.pluginStates[pluginId]?.enabled === true;
+      // 卸载阶段会清除状态；安装失败还原目录后按此快照恢复，启用标志不丢
+      const previousState = { ...(this.pluginStates[pluginId] || {}) };
 
       // 升级前备份旧目录：卸载→安装非原子，安装失败时把旧版 rename 回来，
       // 避免"新版没装上、旧版也没了"两头空
@@ -771,7 +824,8 @@ class PluginService {
         stage = '下载并安装新版本';
         await this.installPlugin(pluginId, lock.token);
       } catch (installError) {
-        // 安装失败：还原备份的旧版本目录，状态随 uninstall 清掉后按原启用态恢复
+        // 安装失败：还原备份的旧版本目录；状态在卸载阶段已被清除，
+        // 新安装未写入状态时按升级前快照恢复（含启用标志），否则插件静默变禁用、重启不再自动启用
         if (backupCreated) {
           try {
             if (!fs.existsSync(pluginDir)) {
@@ -782,6 +836,10 @@ class PluginService {
             console.error('[plugin-service] 还原旧版本目录失败:', pluginId, restoreError);
           }
         }
+        if (!this.pluginStates[pluginId]) {
+          this.pluginStates[pluginId] = { ...previousState, enabled: wasEnabled };
+          this.savePluginStates();
+        }
         throw installError;
       }
       if (backupCreated && fs.existsSync(backupDir)) {
@@ -790,12 +848,13 @@ class PluginService {
 
       if (wasEnabled) {
         stage = '恢复插件启用状态';
-        await this.enablePlugin(pluginId);
+        await this.enablePlugin(pluginId, lock.token);
       }
 
       console.log('[plugin-service] 插件更新成功:', pluginId);
     } catch (error) {
-      const message = error?.message || String(error);
+      // 更新失败的 message 会进「查看错误」对话框展示，走统一净化
+      const message = userFacingTaskError(error, '插件更新失败');
       console.error(`[plugin-service] 更新插件失败，阶段：${stage}`, error);
       
       this.failedUpdates.set(pluginId, {
@@ -828,3 +887,7 @@ class PluginService {
 
 module.exports = new PluginService();
 module.exports.comparePluginVersions = comparePluginVersions;
+module.exports.PLUGIN_ID_PATTERN = PLUGIN_ID_PATTERN;
+module.exports.assertValidPluginId = assertValidPluginId;
+// 测试用：独立实例（单例本身不做行为测试，避免污染真实服务状态）
+module.exports.PluginService = PluginService;

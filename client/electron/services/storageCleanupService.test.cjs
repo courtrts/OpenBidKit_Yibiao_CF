@@ -254,3 +254,15 @@ test('HISTORICAL_CLEANUP_STEP_LABELS 与已知 5 步一致', () => {
   assert.ok(HISTORICAL_CLEANUP_STEP_LABELS.includes('清理旧 Agent 缓存'));
   assert.ok(HISTORICAL_CLEANUP_STEP_LABELS.includes('清理未引用的旧生图'));
 });
+
+test('sweepAgedStartupArtifacts 覆盖插件包下载临时目录（中断下载泄漏 24 小时兜底）', () => {
+  // 下载临时目录在系统临时区（os.tmpdir），无法注入假 app 做行为测试；
+  // 清扫机制（mtime 锚点/删除/剪枝）已由上方测试覆盖，这里锁定目标注册与写入路径同源
+  const { getPluginDownloadTempDir } = require('../utils/paths.cjs');
+  const serviceSource = fs.readFileSync(path.join(__dirname, 'storageCleanupService.cjs'), 'utf-8');
+  assert.match(serviceSource, /label: '插件包下载临时文件', dir: getPluginDownloadTempDir\(\), maxAge: 1 \* day/);
+  const pluginSource = fs.readFileSync(path.join(__dirname, 'pluginService.cjs'), 'utf-8');
+  assert.match(pluginSource, /getPluginDownloadTempDir\(\)/);
+  assert.match(pluginSource, /require\('\.\.\/utils\/paths\.cjs'\)/);
+  assert.ok(getPluginDownloadTempDir().endsWith(path.join('yibiao-plugins')), '目录名固定防漂移');
+});

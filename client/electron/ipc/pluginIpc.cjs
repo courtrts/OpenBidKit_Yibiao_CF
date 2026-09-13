@@ -168,8 +168,12 @@ function registerPluginIpc(ipcMain, app, services) {
   ipcMain.handle('plugins:checkUpdates', async () => pluginService.checkAvailableUpdates());
   ipcMain.handle('plugins:updateAll', async () => pluginService.updateAllAvailablePlugins());
 
-  // 打开配置窗口
+  // 打开配置窗口：pluginId 来自渲染层列表项，同样先过 ID 格式检查——
+  // openPluginConfigWindow 会用其拼接插件目录并加载 configUI，越界 ID 可探读本机任意 manifest/HTML
   ipcMain.handle('plugins:openConfig', async (event, pluginId) => {
+    if (!PLUGIN_CONFIG_ID_PATTERN.test(String(pluginId || ''))) {
+      throw new Error('插件 ID 格式不正确');
+    }
     return openPluginConfigWindow(app, pluginId, pluginService);
   });
 

@@ -128,6 +128,13 @@ function getLocalRenderTempDir() {
   return path.join(os.tmpdir(), 'yibiao-local-image-render');
 }
 
+/** 插件包下载临时目录（pluginService.downloadPlugin）：系统临时区下的短生命周期
+ *  插件 zip，成功/失败路径即删；写入句柄未关（Windows）导致的删除失败与
+ *  崩溃泄漏由 storageCleanupService 启动时按 mtime 锚点清扫 24 小时超龄文件兜底。 */
+function getPluginDownloadTempDir() {
+  return path.join(os.tmpdir(), 'yibiao-plugins');
+}
+
 function getKnowledgeBaseDir(app) {
   return path.join(getWorkspaceDir(app), 'knowledge-base');
 }
@@ -224,6 +231,7 @@ module.exports = {
   getImportedImagesDir,
   getLocalParseCacheDir,
   getLocalRenderTempDir,
+  getPluginDownloadTempDir,
   getKnowledgeBaseDir,
   getLicenseFilePath,
   getOpenXmlHelperDebugExecutablePath,

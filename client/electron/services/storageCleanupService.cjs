@@ -5,6 +5,7 @@ const {
   getGeneratedImagesDir,
   getLocalParseCacheDir,
   getLocalRenderTempDir,
+  getPluginDownloadTempDir,
   getWorkspaceDir,
 } = require('../utils/paths.cjs');
 const { getMermaidCacheDir } = require('../utils/mermaidCache.cjs');
@@ -250,6 +251,9 @@ function sweepAgedStartupArtifacts(app) {
     // 本地转图渲染临时文件（localImageRenderService，系统临时区）：渲染 HTML 页面
     // 正常路径即用即删，进程崩溃会泄漏；24 小时 mtime 锚点清扫兜底（小文件、无敏感内容）
     { label: '本地转图渲染临时文件', dir: getLocalRenderTempDir(), maxAge: 1 * day },
+    // 插件包下载临时文件（pluginService，系统临时区）：正常路径成功/失败即删，
+    // 下载中断且写入句柄未关（Windows）会泄漏至多 200MB/个；24 小时 mtime 锚点清扫兜底
+    { label: '插件包下载临时文件', dir: getPluginDownloadTempDir(), maxAge: 1 * day },
   ];
   for (const { label, dir, maxAge } of targets) {
     try {

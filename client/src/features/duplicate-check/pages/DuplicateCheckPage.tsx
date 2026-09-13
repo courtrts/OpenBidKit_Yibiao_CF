@@ -525,14 +525,17 @@ function DuplicateImagePane({ analysis, bidFiles }: { analysis?: DuplicateImageA
   );
 }
 
-function DuplicateAnalysisPane({ activeTab, onTabChange, metadataAnalysis, outlineAnalysis, contentAnalysis, imageAnalysis, bidFiles, startingAnalysis, onRerun }: { activeTab: DuplicateAnalysisTabId; onTabChange: (tab: DuplicateAnalysisTabId) => void; metadataAnalysis?: DuplicateMetadataAnalysisState; outlineAnalysis?: DuplicateOutlineAnalysisState; contentAnalysis?: DuplicateContentAnalysisState; imageAnalysis?: DuplicateImageAnalysisState; bidFiles: LocalFileSelection[]; startingAnalysis: boolean; onRerun: () => void }) {
+function DuplicateAnalysisPane({ activeTab, onTabChange, metadataAnalysis, outlineAnalysis, contentAnalysis, imageAnalysis, bidFiles, startingAnalysis, onRerun, cancelVisible, cancelling, onCancel }: { activeTab: DuplicateAnalysisTabId; onTabChange: (tab: DuplicateAnalysisTabId) => void; metadataAnalysis?: DuplicateMetadataAnalysisState; outlineAnalysis?: DuplicateOutlineAnalysisState; contentAnalysis?: DuplicateContentAnalysisState; imageAnalysis?: DuplicateImageAnalysisState; bidFiles: LocalFileSelection[]; startingAnalysis: boolean; onRerun: () => void; cancelVisible: boolean; cancelling: boolean; onCancel: () => void }) {
   const activeItem = analysisTabs.find((item) => item.id === activeTab) || analysisTabs[0];
   const metadataStatus = metadataAnalysis?.status || 'pending';
-  const metadataProgress = metadataAnalysis?.status === 'success' || metadataAnalysis?.status === 'error'
+  const metadataProgress = metadataAnalysis?.status === 'success'
     ? 100
-    : metadataAnalysis?.metadataExtraction?.total
-      ? Math.round((metadataAnalysis.metadataExtraction.completed / metadataAnalysis.metadataExtraction.total) * 100)
-      : 0;
+    // 失败进度封顶 99，与后端终态口径一致，避免“失败”却显示 100%
+    : metadataAnalysis?.status === 'error'
+      ? 99
+      : metadataAnalysis?.metadataExtraction?.total
+        ? Math.round((metadataAnalysis.metadataExtraction.completed / metadataAnalysis.metadataExtraction.total) * 100)
+        : 0;
   const analysisRunning = startingAnalysis || metadataStatus === 'running' || outlineAnalysis?.status === 'running' || contentAnalysis?.status === 'running' || imageAnalysis?.status === 'running';
 
   return (
@@ -545,6 +548,11 @@ function DuplicateAnalysisPane({ activeTab, onTabChange, metadataAnalysis, outli
         <button type="button" className="secondary-action" onClick={onRerun} disabled={!bidFiles.length || analysisRunning}>
           {analysisRunning ? '分析中...' : '重新查重'}
         </button>
+        {cancelVisible ? (
+          <button type="button" className="secondary-action" onClick={onCancel} disabled={cancelling} aria-label="取消标书查重分析任务" title="停止当前正在运行的查重分析任务">
+            {cancelling ? '取消中…' : '取消分析'}
+          </button>
+        ) : null}
       </div>
 
       <div className="duplicate-analysis-tabs" role="tablist" aria-label="标书查重维度">
@@ -632,6 +640,7 @@ function DuplicateCheckPage() {
   const [imageAnalysis, setImageAnalysis] = useState<DuplicateImageAnalysisState | undefined>();
   const [analysisTask, setAnalysisTask] = useState<DuplicateCheckTaskState | undefined>();
   const [startingAnalysis, setStartingAnalysis] = useState(false);
+  const [cancellingAnalysisTask, setCancellingAnalysisTask] = useState(false);
   const [busy, setBusy] = useState<'tender' | 'bid' | null>(null);
   const [exportingExcel, setExportingExcel] = useState(false);
   const [exportedExcelPath, setExportedExcelPath] = useState('');
@@ -642,6 +651,9 @@ function DuplicateCheckPage() {
   const currentAnalysisSignatureRef = useRef('');
   const hydratedRef = useRef(false);
   const documentParseNoticeIdsRef = useRef(new Set<string>());
+  // 记录已观察到 running 的任务 id：仅在“本会话内由 running 迁移到 error”时 toast，
+  // 避免水合阶段把上一会话残留的 error 任务行误报为新失败
+  const analysisTaskSeenRunningRef = useRef(false);
   const { showToast } = useToast();
   const { showDocumentParseNotice } = useDocumentParseNotice();
 
@@ -768,7 +780,22 @@ function DuplicateCheckPage() {
           ? undefined
           : { ...(prev || ({} as DuplicateImageAnalysisState)), ...patch.imageAnalysis } as DuplicateImageAnalysisState);
       }
-      if (patch && Object.prototype.hasOwnProperty.call(patch, 'analysisTask')) setAnalysisTask(patch.analysisTask);
+      if (patch && Object.prototype.hasOwnProperty.call(patch, 'analysisTask')) {
+        const taskPatch = patch.analysisTask;
+        setAnalysisTask(taskPatch);
+        // 任务级错误上屏：此前 analysisTask.error 无任何展示位，行存在时失败原因不可见
+        if (taskPatch?.status === 'running') {
+          analysisTaskSeenRunningRef.current = true;
+        } else if (taskPatch?.status === 'error' && analysisTaskSeenRunningRef.current) {
+          analysisTaskSeenRunningRef.current = false;
+          const errorMessage = taskPatch.error || '标书查重分析失败';
+          // 取消是用户主动操作，按 info 反馈；分析失败按 error 反馈
+          showToast(errorMessage, errorMessage === '已取消该任务' ? 'info' : 'error');
+        } else if (taskPatch) {
+          // 成功终态或未见 running 的 error（历史任务行）：复位观察标记
+          analysisTaskSeenRunningRef.current = false;
+        }
+      }
     });
     window.yibiao?.tasks?.getActiveTasks().catch((error) => {
       console.warn('获取标书查重后台任务状态失败', error);
@@ -816,6 +843,25 @@ function DuplicateCheckPage() {
         }
         showToast(message, 'error');
       });
+  };
+
+  // 查重组用户取消入口：长任务运行中上传/删除/重置/重查全部被锁，
+  // 提供可触达的取消与其他任务组口径一致；终态由任务框架取消兜底异步写入
+  const cancelAnalysisTask = async () => {
+    if (analysisTask?.status !== 'running' || cancellingAnalysisTask) return;
+    setCancellingAnalysisTask(true);
+    try {
+      const canceller = window.yibiao?.tasks.cancelDuplicateCheckTask;
+      if (typeof canceller !== 'function') {
+        throw new Error('后台任务接口尚未加载，请重启应用后重试');
+      }
+      await canceller({ type: 'duplicate-analysis' });
+      showToast('已发送取消请求，正在停止分析…', 'info');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '取消任务失败，请重试', 'error');
+    } finally {
+      setCancellingAnalysisTask(false);
+    }
   };
 
   useEffect(() => {
@@ -1185,7 +1231,7 @@ function DuplicateCheckPage() {
           </section>
         </>
       ) : (
-        <DuplicateAnalysisPane activeTab={activeAnalysisTab} onTabChange={setActiveAnalysisTab} metadataAnalysis={metadataAnalysis} outlineAnalysis={outlineAnalysis} contentAnalysis={contentAnalysis} imageAnalysis={imageAnalysis} bidFiles={bidFiles} startingAnalysis={startingAnalysis || analysisTask?.status === 'running'} onRerun={() => startDuplicateAnalysis(true)} />
+        <DuplicateAnalysisPane activeTab={activeAnalysisTab} onTabChange={setActiveAnalysisTab} metadataAnalysis={metadataAnalysis} outlineAnalysis={outlineAnalysis} contentAnalysis={contentAnalysis} imageAnalysis={imageAnalysis} bidFiles={bidFiles} startingAnalysis={startingAnalysis || analysisTask?.status === 'running'} onRerun={() => startDuplicateAnalysis(true)} cancelVisible={analysisTask?.status === 'running'} cancelling={cancellingAnalysisTask} onCancel={() => void cancelAnalysisTask()} />
       )}
 
       <AppDialog

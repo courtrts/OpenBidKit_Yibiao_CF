@@ -1415,13 +1415,14 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
       return;
     }
     const message = '上次标书查重分析未完成，请重新分析';
+    // 失败进度封顶 99：与技术方案/查废等恢复分支口径一致，error 态不显示 100%
     const markAnalysis = (analysis) => analysis?.status === 'running'
-      ? { ...analysis, status: 'error', progress: 100, message, updated_at: now() }
+      ? { ...analysis, status: 'error', progress: 99, message, updated_at: now() }
       : analysis;
     const recoveredTask = {
       ...state.analysisTask,
       status: 'error',
-      progress: 100,
+      progress: 99,
       logs: [message],
       error: message,
       updated_at: now(),
@@ -1761,6 +1762,23 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
       const type = String(payload?.type || '');
       const definition = getTaskDefinition(type);
       if (!definition || definition.group !== 'rejection-check') {
+        throw new Error('未知任务类型');
+      }
+      const task = activeTasks.get(type);
+      const control = activeTaskControls.get(type);
+      if (!task || !isActiveTaskStatus(task.status) || !control?.cancel) {
+        throw new Error('当前任务未在运行');
+      }
+      control.cancel('已取消该任务');
+      return { success: true, task_id: task.task_id };
+    },
+    // 用户可触达的取消入口（duplicate-check 组）：与可研/技术方案/查废组同模式，补齐查重组缺口。
+    // 查重流水线为本地 CPU 密集任务（无 AI 调用），runner 已在各阶段循环接入取消信号检查点，
+    // 取消后及时中断并上交取消错误，终态由 settleCancelledTask 异步写入并推送事件。
+    cancelDuplicateCheckTask(payload = {}) {
+      const type = String(payload?.type || '');
+      const definition = getTaskDefinition(type);
+      if (!definition || definition.group !== 'duplicate-check') {
         throw new Error('未知任务类型');
       }
       const task = activeTasks.get(type);

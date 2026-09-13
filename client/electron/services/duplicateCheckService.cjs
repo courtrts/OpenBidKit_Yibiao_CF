@@ -10,6 +10,7 @@ const iconv = require('iconv-lite');
 const { PDFParse } = require('pdf-parse');
 const { getDuplicateCheckContentDir, getGeneratedImagesDir, getImportedImagesDir } = require('../utils/paths.cjs');
 const { compactLogError, createDeveloperLogger, textMetrics } = require('../utils/developerLog.cjs');
+const { userFacingTaskError } = require('../utils/taskErrorText.cjs');
 const { normalizeDocumentParseError } = require('./documentParseErrors.cjs');
 const { parseDocumentWithConfig } = require('./fileService.cjs');
 
@@ -2235,7 +2236,9 @@ function loadDeveloperConfig(configStore) {
 function createDuplicateCheckService({ app, configStore, workspaceStore } = {}) {
   function analysisProgress(value) {
     if (!value) return 0;
-    if (value.status === 'success' || value.status === 'error') return 100;
+    if (value.status === 'success') return 100;
+    // 失败进度封顶 99：error 终态显示 100% 会被误读为"已完成"
+    if (value.status === 'error') return 99;
     return Math.max(0, Math.min(Number(value.progress) || 0, 99));
   }
 
@@ -2306,7 +2309,7 @@ function createDuplicateCheckService({ app, configStore, workspaceStore } = {}) 
     return updateAnalysisField('imageAnalysis', partial, persist, signature);
   }
 
-  async function runContentExtraction(allFiles, webContents, signature, developerLogger, tenderFiles) {
+  async function runContentExtraction(allFiles, webContents, signature, developerLogger, tenderFiles, taskControl) {
     const config = configStore ? configStore.load() : { components: { file_parser: { provider: 'local' } } };
     const dir = getDuplicateCheckContentDir(app);
     await fs.mkdir(dir, { recursive: true });
@@ -2320,6 +2323,8 @@ function createDuplicateCheckService({ app, configStore, workspaceStore } = {}) 
     updateAnalysis({ contentExtraction: { status: 'running', completed: 0, total: allFiles.length }, message: '正在提取正文内容' }, webContents, signature);
 
     for (const file of allFiles) {
+      // 取消信号检查点：用户取消后立即中断流水线，不再继续消耗主进程 CPU
+      if (taskControl?.signal?.aborted) throw taskControl.signal.reason || new Error('后台任务已取消');
       const fileId = stableFileId(file);
       try {
         const markdown = (await parseDocumentWithConfig(app, file.file_path, config, {
@@ -2341,7 +2346,8 @@ function createDuplicateCheckService({ app, configStore, workspaceStore } = {}) 
           markdown_metrics: textMetrics(markdown),
         });
       } catch (error) {
-        results.push({ file_id: fileId, file_name: file.file_name, status: 'error', error: error.message || '正文提取失败' });
+        // 用户可见消息走统一净化（剥离路径与换行/截断），原始细节保留在开发者日志
+        results.push({ file_id: fileId, file_name: file.file_name, status: 'error', error: userFacingTaskError(error, '正文提取失败') });
         developerLogger?.write('duplicate.content_extraction.file.error', {
           file: summarizeDuplicateFileForLog(file, tenderFileIds.has(fileId) ? 'tender' : 'bid'),
           error: compactLogError(error),
@@ -2369,7 +2375,7 @@ function createDuplicateCheckService({ app, configStore, workspaceStore } = {}) 
     return parts.join('\n\n');
   }
 
-  async function runMetadataExtraction(bidFiles, webContents, signature, developerLogger) {
+  async function runMetadataExtraction(bidFiles, webContents, signature, developerLogger, taskControl) {
     const results = [];
     developerLogger?.write('duplicate.metadata_extraction.started', {
       signature,
@@ -2378,6 +2384,8 @@ function createDuplicateCheckService({ app, configStore, workspaceStore } = {}) 
     updateAnalysis({ metadataExtraction: { status: 'running', completed: 0, total: bidFiles.length }, message: '正在提取投标文件元数据' }, webContents, signature);
 
     for (const file of bidFiles) {
+      // 取消信号检查点
+      if (taskControl?.signal?.aborted) throw taskControl.signal.reason || new Error('后台任务已取消');
       const fileId = stableFileId(file);
       try {
         results.push({ file_id: fileId, file_name: file.file_name, status: 'success', metadata: await extractMetadata(file) });
@@ -2386,7 +2394,8 @@ function createDuplicateCheckService({ app, configStore, workspaceStore } = {}) 
           metadata_count: results[results.length - 1].metadata.length,
         });
       } catch (error) {
-        results.push({ file_id: fileId, file_name: file.file_name, status: 'error', error: error.message || '元数据提取失败', metadata: [] });
+        // 用户可见消息走统一净化，原始细节保留在开发者日志
+        results.push({ file_id: fileId, file_name: file.file_name, status: 'error', error: userFacingTaskError(error, '元数据提取失败'), metadata: [] });
         developerLogger?.write('duplicate.metadata_extraction.file.error', {
           file: summarizeDuplicateFileForLog(file, 'bid'),
           error: compactLogError(error),
@@ -2416,7 +2425,7 @@ function createDuplicateCheckService({ app, configStore, workspaceStore } = {}) 
     return fs.readFile(item.content_path, 'utf-8');
   }
 
-  async function runOutlineAnalysis(tenderFiles, bidFiles, contentFiles, signature, webContents, developerLogger) {
+  async function runOutlineAnalysis(tenderFiles, bidFiles, contentFiles, signature, webContents, developerLogger, taskControl) {
     developerLogger?.write('duplicate.outline_analysis.started', {
       signature,
       bid_file_count: bidFiles.length,
@@ -2430,7 +2439,7 @@ function createDuplicateCheckService({ app, configStore, workspaceStore } = {}) 
         const tenderMarkdown = await readCombinedTenderMarkdown(contentFiles, tenderFiles);
         tenderSentences = splitTenderSentences(tenderMarkdown);
       } catch (error) {
-        updateOutlineAnalysis({ message: `招标文件句子白名单生成失败，继续对比投标文件目录：${error.message || error}` }, webContents, signature);
+        updateOutlineAnalysis({ message: `招标文件句子白名单生成失败，继续对比投标文件目录：${userFacingTaskError(error, '未知原因')}` }, webContents, signature);
         developerLogger?.write('duplicate.outline_analysis.tender_whitelist.error', {
           error: compactLogError(error),
         });
@@ -2442,6 +2451,8 @@ function createDuplicateCheckService({ app, configStore, workspaceStore } = {}) 
 
     updateOutlineAnalysis({ tenderSentenceCount: tenderSentences.length, message: '正在提取投标文件目录' }, webContents, signature);
     for (const file of bidFiles) {
+      // 取消信号检查点
+      if (taskControl?.signal?.aborted) throw taskControl.signal.reason || new Error('后台任务已取消');
       const fileId = stableFileId(file);
       try {
         const markdown = await readContentMarkdown(contentFiles, file);
@@ -2465,7 +2476,8 @@ function createDuplicateCheckService({ app, configStore, workspaceStore } = {}) 
           tender_matched_count: tenderMatchedCount,
         });
       } catch (error) {
-        results.push({ file_id: fileId, file_name: file.file_name, status: 'error', item_count: 0, tender_matched_count: 0, items: [], error: error.message || '目录提取失败' });
+        // 用户可见消息走统一净化，原始细节保留在开发者日志
+        results.push({ file_id: fileId, file_name: file.file_name, status: 'error', item_count: 0, tender_matched_count: 0, items: [], error: userFacingTaskError(error, '目录提取失败') });
         developerLogger?.write('duplicate.outline_analysis.file.error', {
           file: summarizeDuplicateFileForLog(file, 'bid'),
           error: compactLogError(error),
@@ -2486,7 +2498,8 @@ function createDuplicateCheckService({ app, configStore, workspaceStore } = {}) 
     const failed = results.some((item) => item.status === 'error');
     updateOutlineAnalysis({
       status: failed ? 'error' : 'success',
-      progress: 100,
+      // 失败终态进度封顶 99，成功才显示 100%
+      progress: failed ? 99 : 100,
       message: failed ? '部分文件目录分析失败' : '目录分析完成',
       signature,
       extraction: { status: failed ? 'error' : 'success', completed: results.length, total: bidFiles.length },
@@ -2508,7 +2521,7 @@ function createDuplicateCheckService({ app, configStore, workspaceStore } = {}) 
     return results;
   }
 
-  async function runContentDuplicateAnalysis(tenderFiles, bidFiles, contentFiles, signature, webContents, developerLogger) {
+  async function runContentDuplicateAnalysis(tenderFiles, bidFiles, contentFiles, signature, webContents, developerLogger, taskControl) {
     const contentStartedAt = Date.now();
     developerLogger?.write('duplicate.content_analysis.started', {
       signature,
@@ -2523,7 +2536,7 @@ function createDuplicateCheckService({ app, configStore, workspaceStore } = {}) 
         const tenderMarkdown = await readCombinedTenderMarkdown(contentFiles, tenderFiles);
         tenderMatcher = buildTenderSourceMatcher(splitContentSentences(tenderMarkdown));
       } catch (error) {
-        updateContentAnalysis({ message: `招标文件句子白名单生成失败，继续比对投标正文：${error.message || error}` }, webContents, signature);
+        updateContentAnalysis({ message: `招标文件句子白名单生成失败，继续比对投标正文：${userFacingTaskError(error, '未知原因')}` }, webContents, signature);
         developerLogger?.write('duplicate.content_analysis.tender_whitelist.error', {
           error: compactLogError(error),
         });
@@ -2537,8 +2550,12 @@ function createDuplicateCheckService({ app, configStore, workspaceStore } = {}) 
     let totalSentenceCount = 0;
     let tenderMatchedSentenceCount = 0;
     let firstOrder = 0;
+    // 文件级失败跟踪：与目录/图片阶段同口径（任一文件比对失败→阶段 error），不再恒记 success
+    let fileFailed = false;
 
     for (let fileIndex = 0; fileIndex < bidFiles.length; fileIndex += 1) {
+      // 取消信号检查点
+      if (taskControl?.signal?.aborted) throw taskControl.signal.reason || new Error('后台任务已取消');
       const file = bidFiles[fileIndex];
       const fileId = stableFileId(file);
       const fileStartedAt = Date.now();
@@ -2564,6 +2581,8 @@ function createDuplicateCheckService({ app, configStore, workspaceStore } = {}) 
 
           const processed = sentenceIndex + 1;
           if (processed % 500 === 0 && processed < sentences.length) {
+            // 取消信号检查点（分块让出点，长文件比对中也可及时停止）
+            if (taskControl?.signal?.aborted) throw taskControl.signal.reason || new Error('后台任务已取消');
             updateContentAnalysis({
               status: 'running',
               progress: bidFiles.length ? Math.min(89, Math.round(5 + ((fileIndex + processed / sentences.length) / bidFiles.length) * 80)) : 85,
@@ -2592,7 +2611,9 @@ function createDuplicateCheckService({ app, configStore, workspaceStore } = {}) 
           compared_sentence_count: sentences.length - fileTenderMatchedCount,
         });
       } catch (error) {
-        updateContentAnalysis({ message: `${file.file_name} 正文比对失败：${error.message || error}` }, webContents, signature);
+        fileFailed = true;
+        // 用户可见消息走统一净化，原始细节保留在开发者日志
+        updateContentAnalysis({ message: `${file.file_name} 正文比对失败：${userFacingTaskError(error, '未知原因')}` }, webContents, signature);
         developerLogger?.write('duplicate.content_analysis.file.error', {
           file: summarizeDuplicateFileForLog(file, 'bid'),
           duration_ms: Date.now() - fileStartedAt,
@@ -2613,19 +2634,20 @@ function createDuplicateCheckService({ app, configStore, workspaceStore } = {}) 
 
     const duplicateSentences = buildDuplicateSentences(globalSentences);
     updateContentAnalysis({
-      status: 'success',
-      progress: 100,
-      message: '正文比对完成',
+      // 失败终态进度封顶 99，成功才显示 100%
+      status: fileFailed ? 'error' : 'success',
+      progress: fileFailed ? 99 : 100,
+      message: fileFailed ? '部分文件正文比对失败' : '正文比对完成',
       signature,
       tenderSentenceCount: tenderMatcher.tenderSentenceCount,
       tenderMatchedSentenceCount,
       totalSentenceCount,
-      extraction: { status: 'success', completed: bidFiles.length, total: bidFiles.length },
+      extraction: { status: fileFailed ? 'error' : 'success', completed: bidFiles.length, total: bidFiles.length },
       duplicateSentences,
     }, webContents, signature);
     developerLogger?.write('duplicate.content_analysis.completed', {
       signature,
-      status: 'success',
+      status: fileFailed ? 'error' : 'success',
       duration_ms: Date.now() - contentStartedAt,
       tender_sentence_count: tenderMatcher.tenderSentenceCount,
       tender_matched_sentence_count: tenderMatchedSentenceCount,
@@ -2633,10 +2655,10 @@ function createDuplicateCheckService({ app, configStore, workspaceStore } = {}) 
       total_sentence_count: totalSentenceCount,
       duplicate_sentence_count: duplicateSentences.length,
     });
-    return { status: 'success', duplicateSentences };
+    return { status: fileFailed ? 'error' : 'success', duplicateSentences };
   }
 
-  async function runImageDuplicateAnalysis(bidFiles, contentFiles, signature, webContents, developerLogger) {
+  async function runImageDuplicateAnalysis(bidFiles, contentFiles, signature, webContents, developerLogger, taskControl) {
     developerLogger?.write('duplicate.image_analysis.started', {
       signature,
       bid_file_count: bidFiles.length,
@@ -2647,6 +2669,8 @@ function createDuplicateCheckService({ app, configStore, workspaceStore } = {}) 
     let totalImageCount = 0;
 
     for (const file of bidFiles) {
+      // 取消信号检查点
+      if (taskControl?.signal?.aborted) throw taskControl.signal.reason || new Error('后台任务已取消');
       const fileId = stableFileId(file);
       try {
         const markdown = await readContentMarkdown(contentFiles, file);
@@ -2685,7 +2709,8 @@ function createDuplicateCheckService({ app, configStore, workspaceStore } = {}) 
           unique_image_count: local.size,
         });
       } catch (error) {
-        results.push({ file_id: fileId, file_name: file.file_name, status: 'error', image_count: 0, unique_image_count: 0, error: error.message || '图片比对失败' });
+        // 用户可见消息走统一净化，原始细节保留在开发者日志
+        results.push({ file_id: fileId, file_name: file.file_name, status: 'error', image_count: 0, unique_image_count: 0, error: userFacingTaskError(error, '图片比对失败') });
         developerLogger?.write('duplicate.image_analysis.file.error', {
           file: summarizeDuplicateFileForLog(file, 'bid'),
           error: compactLogError(error),
@@ -2706,7 +2731,8 @@ function createDuplicateCheckService({ app, configStore, workspaceStore } = {}) 
     const failed = results.some((item) => item.status === 'error');
     updateImageAnalysis({
       status: failed ? 'error' : 'success',
-      progress: 100,
+      // 失败终态进度封顶 99，成功才显示 100%
+      progress: failed ? 99 : 100,
       message: failed ? '部分文件图片比对失败' : '图片比对完成',
       signature,
       extraction: { status: failed ? 'error' : 'success', completed: results.length, total: bidFiles.length },
@@ -2724,7 +2750,7 @@ function createDuplicateCheckService({ app, configStore, workspaceStore } = {}) 
     return { status: failed ? 'error' : 'success', duplicateImages };
   }
 
-  async function run(signature, payload, target, developerLogger) {
+  async function run(signature, payload, target, developerLogger, taskControl) {
     const tenderFiles = getTenderFilesFromPayload(payload);
     const tenderFile = tenderFiles[0] || null;
     const bidFiles = Array.isArray(payload.bidFiles) ? payload.bidFiles : [];
@@ -2737,8 +2763,8 @@ function createDuplicateCheckService({ app, configStore, workspaceStore } = {}) 
     });
 
     try {
-      const contentPromise = runContentExtraction(allFiles, target, signature, developerLogger, tenderFiles);
-      const metadataFiles = await runMetadataExtraction(bidFiles, target, signature, developerLogger);
+      const contentPromise = runContentExtraction(allFiles, target, signature, developerLogger, tenderFiles, taskControl);
+      const metadataFiles = await runMetadataExtraction(bidFiles, target, signature, developerLogger, taskControl);
       updateOutlineAnalysis({ status: 'running', progress: 1, message: '元数据提取完成，等待正文内容用于目录分析', extraction: { status: 'running', completed: 0, total: bidFiles.length } }, target, signature);
       updateContentAnalysis({ status: 'running', progress: 1, message: '元数据提取完成，等待正文内容用于正文比对', extraction: { status: 'running', completed: 0, total: bidFiles.length } }, target, signature);
       updateImageAnalysis({ status: 'running', progress: 1, message: '元数据提取完成，等待正文内容用于图片比对', extraction: { status: 'running', completed: 0, total: bidFiles.length } }, target, signature);
@@ -2746,13 +2772,14 @@ function createDuplicateCheckService({ app, configStore, workspaceStore } = {}) 
       const metadataFailed = contentFiles.some((item) => item.status === 'error') || metadataFiles.some((item) => item.status === 'error');
       updateAnalysis({
         status: metadataFailed ? 'error' : 'success',
-        progress: 100,
+        // 失败终态进度封顶 99，成功才显示 100%
+        progress: metadataFailed ? 99 : 100,
         message: metadataFailed ? '部分文件提取失败' : '元数据分析完成',
       }, target, signature);
       const [outlineFiles, contentResult, imageResult] = await Promise.all([
-        runOutlineAnalysis(tenderFiles, bidFiles, contentFiles, signature, target, developerLogger),
-        runContentDuplicateAnalysis(tenderFiles, bidFiles, contentFiles, signature, target, developerLogger),
-        runImageDuplicateAnalysis(bidFiles, contentFiles, signature, target, developerLogger),
+        runOutlineAnalysis(tenderFiles, bidFiles, contentFiles, signature, target, developerLogger, taskControl),
+        runContentDuplicateAnalysis(tenderFiles, bidFiles, contentFiles, signature, target, developerLogger, taskControl),
+        runImageDuplicateAnalysis(bidFiles, contentFiles, signature, target, developerLogger, taskControl),
       ]);
       const failed = metadataFailed
         || outlineFiles.some((item) => item.status === 'error')
@@ -2769,7 +2796,15 @@ function createDuplicateCheckService({ app, configStore, workspaceStore } = {}) 
       });
       return failed ? 'error' : 'success';
     } catch (error) {
-      updateAnalysis({ status: 'error', progress: 100, message: error.message || '元数据分析失败' }, target, signature);
+      // 取消不是分析失败：直接上交取消错误，终态由任务框架 settleCancelledTask 统一写入
+      if (taskControl?.signal?.aborted) throw error;
+      updateAnalysis({
+        status: 'error',
+        // 失败终态进度封顶 99
+        progress: 99,
+        // 用户可见消息走统一净化，原始细节保留在开发者日志
+        message: userFacingTaskError(error, '元数据分析失败'),
+      }, target, signature);
       developerLogger?.write('duplicate.pipeline.error', {
         signature,
         error: compactLogError(error),
@@ -2779,7 +2814,7 @@ function createDuplicateCheckService({ app, configStore, workspaceStore } = {}) 
   }
 
   return {
-    async runAnalysisTask({ workspaceStore: taskWorkspaceStore, updateTask, checkpointTask, payload }) {
+    async runAnalysisTask({ workspaceStore: taskWorkspaceStore, updateTask, checkpointTask, payload, taskControl }) {
       const signature = createSignature(payload);
       const force = payload.force === true;
       const bidFiles = Array.isArray(payload.bidFiles) ? payload.bidFiles : [];
@@ -2872,17 +2907,23 @@ function createDuplicateCheckService({ app, configStore, workspaceStore } = {}) 
         (hasResultChange || hasTerminalTransition ? checkpointTask : updateTask)(partial, { [field]: analysisPartial });
       };
 
-      const finalStatus = await run(signature, payload, notifyTask, developerLogger);
+      const finalStatus = await run(signature, payload, notifyTask, developerLogger, taskControl);
       const doneLog = finalStatus === 'success' ? '标书查重分析完成。' : '标书查重分析完成，部分结果失败。';
       if (!isCurrentDuplicateCheckSignature(signature)) {
         developerLogger.write('duplicate.task.stale_signature', { signature });
         return;
       }
-      checkpointTask({ status: finalStatus, progress: 100, logs: [doneLog] });
+      // 失败终态进度封顶 99；error 字段携带失败原因供页面 toast 上屏
+      checkpointTask({
+        status: finalStatus,
+        progress: finalStatus === 'success' ? 100 : 99,
+        error: finalStatus === 'success' ? '' : '标书查重分析完成，部分结果失败',
+        logs: [doneLog],
+      });
       developerLogger.write('duplicate.task.completed', {
         signature,
         status: finalStatus,
-        progress: 100,
+        progress: finalStatus === 'success' ? 100 : 99,
       });
     },
   };

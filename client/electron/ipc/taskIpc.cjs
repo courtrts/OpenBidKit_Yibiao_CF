@@ -49,6 +49,10 @@ function registerTaskIpc({ taskService }) {
     taskService.subscribe(event.sender);
     return taskService.startDuplicateAnalysis(payload);
   });
+  ipcMain.handle('tasks:cancel-duplicate-check-task', (event, payload) => {
+    taskService.subscribe(event.sender);
+    return taskService.cancelDuplicateCheckTask(payload);
+  });
   ipcMain.handle('tasks:start-feasibility-analysis', (event, payload) => {
     taskService.subscribe(event.sender);
     return taskService.startFeasibilityAnalysis(payload);

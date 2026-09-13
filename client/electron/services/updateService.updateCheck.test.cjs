@@ -167,3 +167,22 @@ test('attachGitHubIntegrityMetadata: 全部资产已有合法 digest 时不调�
 test('MAX_UPDATE_INSTALLER_BYTES: 上限常量远大于合法安装包（1.5GB）', () => {
   assert.equal(MAX_UPDATE_INSTALLER_BYTES, 1536 * 1024 * 1024);
 });
+
+test('C1 fail-closed 完整性门禁在 runManualInstallerUpdateCheck 中仅出现一次（防重复块回归）', () => {
+  const source = fs.readFileSync(path.join(__dirname, 'updateService.cjs'), 'utf-8');
+  const start = source.indexOf('async function runManualInstallerUpdateCheck(');
+  assert.notEqual(start, -1);
+  const end = source.indexOf('async function runUpdateCheck(');
+  assert.notEqual(end, -1);
+  const region = source.slice(start, end);
+  assert.equal(
+    (region.match(/isValidSha256Digest\(installerFile\.digest\)/g) || []).length,
+    1,
+    '门禁判断只出现一次（历史重复块回归防线）',
+  );
+  assert.equal(
+    (region.match(/更新包缺少完整性校验信息/g) || []).length,
+    1,
+    '门禁文案只允许出现一次',
+  );
+});

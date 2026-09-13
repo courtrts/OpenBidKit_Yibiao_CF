@@ -622,18 +622,9 @@ async function runManualInstallerUpdateCheck(options, release, channel) {
     return { enabled: true, updateAvailable: true, version: release.version, failed: true, message, channel };
   }
 
-  // fail-closed 门禁：将要落盘的安装包必须携带合法 sha256（渠道自报或
+  // fail-closed 门禁：将要落盘的安装包必须携带合法 sha256（渠道自报，或
   // attachGitHubIntegrityMetadata 从 GitHub 校验源交叉取证）。无校验的安装包
   // 是更新链路最直接的恶意投递通道，拒绝下载而不是"先下后验"。
-  if (!isValidSha256Digest(installerFile.digest)) {
-    const message = '更新包缺少完整性校验信息，已暂停本次更新，请稍后重试';
-    onError?.(message);
-    return { enabled: true, updateAvailable: true, version: release.version, failed: true, message, channel };
-  }
-
-  // fail-closed 门禁：将要落盘的安装包必须携带合法 sha256（渠道自报，或
-  // attachGitHubIntegrityMetadata 从 GitHub 校验源按同名资产交叉取证而来）。
-  // 无校验的安装包是更新链路最直接的恶意投递通道——拒绝下载而不是"先下后验"。
   if (!isValidSha256Digest(installerFile.digest)) {
     const message = '更新包缺少完整性校验信息，已暂停本次更新，请稍后重试';
     onError?.(message);

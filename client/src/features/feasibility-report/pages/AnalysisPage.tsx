@@ -17,10 +17,13 @@ interface AnalysisPageProps {
 function AnalysisPage({ analysisMarkdown, task, running, saving, dirty, onChange, onSave, onStart, onCancel }: AnalysisPageProps) {
   const { showToast } = useToast();
   const [cancelling, setCancelling] = useState(false);
-  const progress = Number(task?.progress || 0);
+  const failed = task?.status === 'error';
   const progressLogs = task?.logs || [];
   const latestLog = progressLogs[progressLogs.length - 1] || '';
-  const failed = task?.status === 'error';
+  // error 终态 99 封顶（展示层双保险：onTaskEvent 活补丁路径不经 store 读路径，
+  // 与 Outline/Parameters/Content 三兄弟页及 store 端 taskFromRow 同口径）
+  const clampedProgress = Math.max(0, Math.min(100, Math.round(Number(task?.progress || 0))));
+  const progress = failed ? Math.min(99, clampedProgress) : clampedProgress;
   const hasContent = Boolean(analysisMarkdown.trim());
   const logListRef = useRef<HTMLDivElement | null>(null);
 

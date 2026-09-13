@@ -272,11 +272,15 @@ function createFeasibilityReportStore({ app, db, fileService, taskLogStore, agen
 
   function taskFromRow(row) {
     if (!row) return undefined;
+    // 读路径集中口径：自愈 R91 前落盘的存量 error+100 任务行（R108/R109/R110 同模式）
+    const status = normalizeStatus(row.status, ['running', 'pausing', 'paused', 'success', 'error'], 'running');
+    const clampedProgress = Math.max(0, Math.min(100, Math.round(Number(row.progress || 0))));
     return {
       task_id: row.task_id,
       type: row.type,
-      status: normalizeStatus(row.status, ['running', 'pausing', 'paused', 'success', 'error'], 'running'),
-      progress: Number(row.progress || 0),
+      status,
+      // error 终态 99 封顶：失败任务不得显示 100%
+      progress: status === 'error' ? Math.min(99, clampedProgress) : clampedProgress,
       logs: taskLogStore.list('feasibility-report', row.type, row.task_id),
       started_at: row.started_at,
       updated_at: row.updated_at,
@@ -293,6 +297,9 @@ function createFeasibilityReportStore({ app, db, fileService, taskLogStore, agen
       return;
     }
     const timestamp = now();
+    // 写路径纵深：error 终态入库前封顶 99（与读路径 taskFromRow 同口径）
+    const status = String(task.status || 'running');
+    const clampedProgress = Math.max(0, Math.min(100, Math.round(Number(task.progress || 0))));
     db.prepare(`
       INSERT INTO feasibility_report_tasks (type, task_id, status, progress, stats_json, error, pause_requested, started_at, updated_at)
       VALUES (@type, @task_id, @status, @progress, @stats_json, @error, @pause_requested, @started_at, @updated_at)
@@ -308,8 +315,8 @@ function createFeasibilityReportStore({ app, db, fileService, taskLogStore, agen
     `).run({
       type,
       task_id: String(task.task_id || ''),
-      status: String(task.status || 'running'),
-      progress: Math.max(0, Math.min(100, Math.round(Number(task.progress || 0)))),
+      status: status,
+      progress: status === 'error' ? Math.min(99, clampedProgress) : clampedProgress,
       stats_json: jsonOrNull(task.stats),
       error: task.error ? String(task.error) : null,
       pause_requested: toDbBool(task.pause_requested),

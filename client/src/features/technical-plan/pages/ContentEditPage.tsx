@@ -110,6 +110,47 @@ function ImageExampleIcon() {
   );
 }
 
+interface ImageLimitFieldProps {
+  value: number;
+  max: number;
+  disabled?: boolean;
+  ariaLabel: string;
+  onChange: (value: number) => void;
+}
+
+// 生图上限整数输入：聚焦期间自由编辑（清空不再立即归零），失焦统一解析并
+// 夹取到 [0,max] 后提交；非法输入回滚显示原值。与 ExportFormatPage 的 NumberField 同口径。
+function ImageLimitField({ value, max, disabled, ariaLabel, onChange }: ImageLimitFieldProps) {
+  const [draft, setDraft] = useState(String(value));
+  const [focused, setFocused] = useState(false);
+
+  useEffect(() => {
+    if (!focused) setDraft(String(value));
+  }, [focused, value]);
+
+  return (
+    <input
+      type="number"
+      min="0"
+      max={max}
+      value={draft}
+      disabled={disabled}
+      aria-label={ariaLabel}
+      onFocus={() => setFocused(true)}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={() => {
+        setFocused(false);
+        const parsed = Number(draft);
+        const next = draft.trim() === '' || !Number.isFinite(parsed)
+          ? value
+          : Math.max(0, Math.min(Math.floor(parsed), max));
+        setDraft(String(next));
+        if (next !== value) onChange(next);
+      }}
+    />
+  );
+}
+
 const DEFAULT_HTML_IMAGE_TYPES = '甘特图、进度网络图、组织架构图、泳道图、RACI 职责矩阵、风险矩阵、系统架构与拓扑图、WBS 工作分解结构图、鱼骨图、柱状图、折线图、饼图';
 
 const defaultContentGenerationOptions: ContentGenerationOptions = {
@@ -1555,16 +1596,12 @@ function ContentEditPage({
                 {draftGenerationOptions.useAiImages && imageModelAvailable && (
                   <label className="content-generation-config-row">
                     <span><strong>AI 生图上限</strong></span>
-                    <input
-                      type="number"
-                      min="0"
-                      max={Math.max(1, leaves.length)}
+                    <ImageLimitField
                       value={draftGenerationOptions.maxAiImages}
+                      max={Math.max(1, leaves.length)}
                       disabled={generationStrategyLocked}
-                      onChange={(event) => setDraftGenerationOptions((prev) => ({
-                        ...prev,
-                        maxAiImages: Math.max(0, Math.min(Number(event.target.value) || 0, Math.max(1, leaves.length))),
-                      }))}
+                      ariaLabel="AI 生图上限"
+                      onChange={(v) => setDraftGenerationOptions((prev) => ({ ...prev, maxAiImages: v }))}
                     />
                   </label>
                 )}
@@ -1592,16 +1629,12 @@ function ContentEditPage({
                 {draftGenerationOptions.useMermaidImages && (
                   <label className="content-generation-config-row">
                     <span><strong>Mermaid 生图上限</strong></span>
-                    <input
-                      type="number"
-                      min="0"
-                      max={Math.max(1, leaves.length)}
+                    <ImageLimitField
                       value={draftGenerationOptions.maxMermaidImages}
+                      max={Math.max(1, leaves.length)}
                       disabled={generationStrategyLocked}
-                      onChange={(event) => setDraftGenerationOptions((prev) => ({
-                        ...prev,
-                        maxMermaidImages: Math.max(0, Math.min(Number(event.target.value) || 0, Math.max(1, leaves.length))),
-                      }))}
+                      ariaLabel="Mermaid 生图上限"
+                      onChange={(v) => setDraftGenerationOptions((prev) => ({ ...prev, maxMermaidImages: v }))}
                     />
                   </label>
                 )}
@@ -1629,16 +1662,12 @@ function ContentEditPage({
                 {draftGenerationOptions.useHtmlImages && (
                   <label className="content-generation-config-row">
                     <span><strong>HTML 生图上限</strong></span>
-                    <input
-                      type="number"
-                      min="0"
-                      max={Math.max(1, leaves.length)}
+                    <ImageLimitField
                       value={draftGenerationOptions.maxHtmlImages}
+                      max={Math.max(1, leaves.length)}
                       disabled={generationStrategyLocked}
-                      onChange={(event) => setDraftGenerationOptions((prev) => ({
-                        ...prev,
-                        maxHtmlImages: Math.max(0, Math.min(Number(event.target.value) || 0, Math.max(1, leaves.length))),
-                      }))}
+                      ariaLabel="HTML 生图上限"
+                      onChange={(v) => setDraftGenerationOptions((prev) => ({ ...prev, maxHtmlImages: v }))}
                     />
                   </label>
                 )}

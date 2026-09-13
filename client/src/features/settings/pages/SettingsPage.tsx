@@ -1451,6 +1451,10 @@ function SettingsPage({ onDeveloperModeChange, registerLeaveGuard }: SettingsPag
 
       setImageModels([]);
       showToast('该服务商模型列表接口暂未接入。');
+    } catch (error) {
+      // 拉取模型列表（网络请求）失败不能成为 unhandled rejection：
+      // loading 由 finally 复位，但用户需要明确的失败反馈
+      showToast(error instanceof Error ? error.message : '获取模型列表失败，请检查网络与模型配置', 'error');
     } finally {
       setLoadingModels(null);
     }

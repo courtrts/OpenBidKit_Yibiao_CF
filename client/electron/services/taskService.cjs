@@ -332,7 +332,13 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
       }
     }
     for (const callback of callbackSubscribers) {
-      callback(event);
+      try {
+        callback(event);
+      } catch (error) {
+        // 单个订阅方异常不得中断其余订阅方，更不得沿 checkpoint 链路把任务打失败
+        // （与 agentWorkspaceService.emitChatEvent 的回调守卫同口径）。
+        console.error('[task] 任务事件回调执行失败', error);
+      }
     }
   }
 
@@ -726,7 +732,14 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
         const pausedLogs = currentTask.logs?.length
           ? currentTask.logs
           : ['已请求暂停，正在等待当前 AI 请求完成。'];
-        return checkpointTask({ status: 'pausing', pause_requested: true, logs: pausedLogs }).task;
+        try {
+          return checkpointTask({ status: 'pausing', pause_requested: true, logs: pausedLogs }).task;
+        } catch (error) {
+          // 队列已冻结且 pauseRequested 已置位：运行侧 AI_QUEUE_SCOPE_PAUSED 兜底会补写
+          // paused 终态；checkpoint 瞬态落库失败不应把 raw 存储错误经 IPC 直抛用户。
+          console.error('[task] 暂停检查点落库失败，等待运行侧兜底', error);
+          return currentTask;
+        }
       },
       waitForOutlineSelection() {
         if (abortController.signal.aborted) {

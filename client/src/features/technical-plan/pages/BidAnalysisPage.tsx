@@ -233,6 +233,7 @@ function BidAnalysisPage({
     nextTaskIds: string[];
   } | null>(null);
   const [progressCollapsed, setProgressCollapsed] = useState(false);
+  const [sectionProgressCollapsed, setSectionProgressCollapsed] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const { showToast } = useToast();
   const effectiveSelectedTaskIds = useMemo(() => getSelectedTaskIdsForMode(mode, selectedTaskIds), [mode, selectedTaskIds]);
@@ -258,6 +259,17 @@ function BidAnalysisPage({
     return status === 'success' || status === 'error';
   }).length;
   const sectionTaskRunning = bidSectionExtractionTask?.status === 'running' || bidSectionExtractionTask?.status === 'pausing';
+  const sectionTaskFailed = bidSectionExtractionTask?.status === 'error';
+  // 标段识别是独立后台长任务：运行中展示进度/日志，失败时展示原因（原页面零展示位，用户只能看到按钮文案变化）
+  const showSectionTaskPanel = sectionTaskRunning || sectionTaskFailed;
+  const sectionTaskProgress = sectionTaskRunning
+    ? Math.max(1, Math.min(99, Number(bidSectionExtractionTask?.progress || 0) || 1))
+    : Math.max(0, Math.min(99, Number(bidSectionExtractionTask?.progress || 0) || 0));
+  const sectionTaskLogs = Array.isArray(bidSectionExtractionTask?.logs) ? bidSectionExtractionTask.logs : [];
+  const latestSectionTaskLog = sectionTaskLogs[sectionTaskLogs.length - 1] || '';
+  const sectionTaskPanelMessage = sectionTaskFailed
+    ? bidSectionExtractionTask?.error || bidSectionExtractionError || '多标段识别失败，请重新识别。'
+    : latestSectionTaskLog || '正在识别招标文件中的标段范围。';
   const taskRunning = running || fullRerunLocked || sectionTaskRunning || task?.status === 'running';
   const requiredDone = requiredTasks.every((task) => tasks[task.id]?.status === 'success' && String(tasks[task.id]?.content || '').trim());
   const isPromptCacheOptimizing = taskRunning
@@ -662,6 +674,29 @@ function BidAnalysisPage({
               </div>
             )}
           </div>
+          {showSectionTaskPanel && (
+            <div className={`content-outline-stats bid-section-progress-summary${sectionTaskFailed ? ' is-error' : ''}`}>
+              <button
+                type="button"
+                onClick={() => setSectionProgressCollapsed((prev) => !prev)}
+                aria-expanded={!sectionProgressCollapsed}
+              >
+                <span>多标段识别</span>
+                <strong>{sectionTaskRunning ? '识别中' : '失败'}</strong>
+                <em>{sectionProgressCollapsed ? '展开' : '折叠'}</em>
+              </button>
+              {!sectionProgressCollapsed && (
+                <div className="content-outline-stats-body">
+                  <ProgressBar
+                    value={sectionTaskProgress}
+                    active={sectionTaskRunning}
+                    label={`多标段识别进度 ${sectionTaskProgress}%`}
+                  />
+                  <p>{sectionTaskPanelMessage}</p>
+                </div>
+              )}
+            </div>
+          )}
           <div className="bid-analysis-task-list">
             {taskGroups.map((group) => {
               const groupTasks = selectedTasks.filter((task) => group.ids.includes(task.id));

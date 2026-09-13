@@ -1,4 +1,5 @@
 const { splitUserTextByContextLimit } = require('../utils/userTextSplitter.cjs');
+const { userFacingTaskError } = require('../utils/taskErrorText.cjs');
 
 function pushLog(logs, message) {
   logs.push(message);
@@ -196,7 +197,12 @@ async function collectJson(aiService, options) {
   throw new Error('AI 服务尚未初始化');
 }
 
-async function runBidSectionExtractionTask({ aiService, workspaceStore, updateTask, checkpointTask }) {
+async function runBidSectionExtractionTask({ aiService, workspaceStore, updateTask, checkpointTask, taskControl }) {
+  // 取消检查点：多标段识别为分段 AI 长任务，循环头部与合并前显式检查信号，
+  // 取消错误直接上交，终态由任务框架 settleCancelledTask 统一写入（取消不是识别失败）。
+  const throwIfAborted = () => {
+    if (taskControl?.signal?.aborted) throw taskControl.signal.reason || new Error('多标段识别已取消');
+  };
   const originalMarkdown = workspaceStore.readOriginalTenderMarkdown?.() || workspaceStore.readTenderMarkdown();
   const cleanMarkdown = String(originalMarkdown || '').trim();
   if (!cleanMarkdown) {
@@ -227,6 +233,7 @@ async function runBidSectionExtractionTask({ aiService, workspaceStore, updateTa
 
     const segmentResults = [];
     for (let index = 0; index < sourceSegments.length; index += 1) {
+      throwIfAborted();
       const raw = await collectJson(aiService, {
         messages: buildExtractMessages(sourceSegments[index], index + 1, sourceSegments.length),
         response_format: { type: 'json_object' },
@@ -237,6 +244,7 @@ async function runBidSectionExtractionTask({ aiService, workspaceStore, updateTa
       log(`已完成第 ${index + 1}/${sourceSegments.length} 段标段候选提取。`, Math.min(80, 12 + Math.round(((index + 1) / sourceSegments.length) * 60)));
     }
 
+    throwIfAborted();
     const mergedRaw = sourceSegments.length > 1
       ? await collectJson(aiService, {
         messages: buildMergeMessages(segmentResults),
@@ -256,8 +264,12 @@ async function runBidSectionExtractionTask({ aiService, workspaceStore, updateTa
       bidSectionExtractionError: undefined,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : '多标段识别失败';
-    checkpointTask({ status: 'error', progress: 100, error: message, logs: pushLog(logs, message) }, {
+    // 取消不是识别失败：直接上交取消错误，终态由任务框架 settleCancelledTask 统一写入
+    if (taskControl?.signal?.aborted) throw error;
+    // 用户可见错误统一净化（原始报错可能含路径/堆栈，会经托盘系统通知外显）
+    const message = userFacingTaskError(error, '多标段识别失败');
+    // 失败进度封顶 99：error 终态显示 100% 会被误读为"已完成"
+    checkpointTask({ status: 'error', progress: 99, error: message, logs: pushLog(logs, message) }, {
       bidSectionMode: 'multiple',
       bidSectionExtractionStatus: 'error',
       bidSectionExtractionError: message,

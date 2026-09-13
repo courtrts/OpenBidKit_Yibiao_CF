@@ -1314,7 +1314,8 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
     const recoveredTask = {
       ...extractionTask,
       status: 'error',
-      progress: 100,
+      // 失败进度封顶 99：与技术方案/查废等恢复分支口径一致，error 态不显示 100%
+      progress: 99,
       pause_requested: false,
       error: message,
       logs: [...(Array.isArray(extractionTask.logs) ? extractionTask.logs : []), message],

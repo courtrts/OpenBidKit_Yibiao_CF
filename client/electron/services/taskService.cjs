@@ -868,18 +868,23 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
           items: defaultItems,
           selectedIds: defaultSelectedIds,
         }),
-        onStateChange: ({ auto_answer_at: autoAnswerAt }) => {
+        onStateChange: ({ auto_answer_at: autoAnswerAt, auto_submit_failed: autoSubmitFailed }) => {
           const currentSelection = currentTask.stats?.outline_selection;
           if (!currentSelection || currentSelection.confirmed) return;
           const nextSelection = { ...currentSelection };
           if (autoAnswerAt) nextSelection.auto_answer_at = autoAnswerAt;
           else delete nextSelection.auto_answer_at;
+          if (autoSubmitFailed) nextSelection.auto_submit_failed = true;
+          else delete nextSelection.auto_submit_failed;
           currentTask = checkpointTask({
             stats: {
               ...(currentTask.stats || {}),
               outline_selection: nextSelection,
             },
           }).task;
+        },
+        onSubmitError: (error) => {
+          console.error('[task] 一级目录自动确认提交失败', error?.message || String(error));
         },
       });
     };

@@ -232,6 +232,7 @@ export interface AgentQuestion {
   options: AgentQuestionOption[];
   asked_at: string;
   auto_answer_at?: string;
+  auto_submit_failed?: boolean;
   is_primary?: boolean;
 }
 

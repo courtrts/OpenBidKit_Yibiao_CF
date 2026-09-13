@@ -1,7 +1,7 @@
 const AUTO_CONFIRMATION_DELAY_MS = 8_000;
 
 // 管理所有待确认项的自动提交计时，不理解具体选项和业务内容。
-function createAutoConfirmationService({ configStore }) {
+function createAutoConfirmationService({ configStore, delayMs = AUTO_CONFIRMATION_DELAY_MS }) {
   const entries = new Map();
   const listeners = new Set();
 
@@ -28,25 +28,32 @@ function createAutoConfirmationService({ configStore }) {
   function refreshEntry(entry) {
     clearTimer(entry);
     if (getState().enabled && !entry.suppressed) {
-      entry.autoAnswerAt = new Date(Date.now() + AUTO_CONFIRMATION_DELAY_MS).toISOString();
+      entry.autoAnswerAt = new Date(Date.now() + delayMs).toISOString();
       entry.timer = setTimeout(() => {
         if (entries.get(entry.id) !== entry) return;
         entry.timer = null;
         entry.autoAnswerAt = '';
         notifyEntry(entry);
-        void Promise.resolve().then(() => entry.submit()).catch(() => undefined);
-      }, AUTO_CONFIRMATION_DELAY_MS);
+        void Promise.resolve().then(() => entry.submit()).catch((error) => {
+          // 自动提交失败不得静默：把失败位同步给所属业务，由其提示用户手动提交。
+          if (entries.get(entry.id) !== entry) return;
+          console.error('[auto-confirmation] 自动提交失败', error?.message || String(error));
+          try { entry.onSubmitError?.(error); } catch {}
+          try { entry.onStateChange?.({ auto_answer_at: undefined, auto_submit_failed: true }); } catch {}
+        });
+      }, delayMs);
     }
     notifyEntry(entry);
   }
 
   // 注册一个由业务提供默认提交行为的待确认项。
-  function register({ id, submit, onStateChange }) {
+  function register({ id, submit, onStateChange, onSubmitError }) {
     unregister(id);
     const entry = {
       id,
       submit,
       onStateChange,
+      onSubmitError,
       timer: null,
       autoAnswerAt: '',
       suppressed: false,

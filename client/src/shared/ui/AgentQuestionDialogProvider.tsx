@@ -231,6 +231,9 @@ export function AgentQuestionDialogProvider({ children }: { children: ReactNode 
                 {question?.auto_answer_at && recommendedOption && (
                   <small>{countdownSeconds} 秒后自动执行“{recommendedOption.label}”</small>
                 )}
+                {question?.auto_submit_failed && (
+                  <small>自动回答未成功，请手动提交</small>
+                )}
               </div>
               <button
                 type="button"

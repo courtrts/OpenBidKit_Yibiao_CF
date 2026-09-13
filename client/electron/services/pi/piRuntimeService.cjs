@@ -13,6 +13,7 @@ const {
   createPersistentAgentTask,
   getPersistentAgentSessionPath,
   loadPersistentAgentTask,
+  savePersistentAgentResult,
   updatePersistentAgentTask,
 } = require('./piPersistentTaskStore.cjs');
 const {
@@ -416,11 +417,6 @@ function createPiRuntimeService({ app, configStore, aiService, isMonitorActive, 
     fs.writeFileSync(filePath, JSON.stringify(value, null, 2), 'utf-8');
   }
 
-  async function writeJsonAsync(filePath, value) {
-    await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
-    await fs.promises.writeFile(filePath, JSON.stringify(value, null, 2), 'utf-8');
-  }
-
   function subscribeSession(session, taskToken, diffEntries, modelRetryStats) {
     let streamedText = '';
     return session.subscribe((event) => {
@@ -669,6 +665,7 @@ function createPiRuntimeService({ app, configStore, aiService, isMonitorActive, 
     });
     const signal = activeController?.signal;
     let onAbort;
+    let settled = false;
     try {
       const result = await new Promise((resolve, reject) => {
         onAbort = () => reject(signal?.reason || new Error('Agent 任务已取消'));
@@ -679,17 +676,19 @@ function createPiRuntimeService({ app, configStore, aiService, isMonitorActive, 
         signal?.addEventListener?.('abort', onAbort, { once: true });
         Promise.resolve(waiter).then(resolve, reject);
       });
+      settled = true;
       return result;
     } finally {
       signal?.removeEventListener?.('abort', onAbort);
       if (activeTask?.task_token === taskToken) {
         activeTask.waiting_for_user = false;
+        // 中止（取消/关闭）路径不发「继续执行」误导进度，与 waitForUserQuestion answered 分支同口径。
         touchActivity({
           task_token: taskToken,
-          stage: 'running',
-          message: '已收到用户操作，Agent 正在继续执行',
-          source: 'pi.workflow.resumed',
-          visible: true,
+          stage: settled ? 'running' : activeTask.stage,
+          message: settled ? '已收到用户操作，Agent 正在继续执行' : '',
+          source: settled ? 'pi.workflow.resumed' : 'pi.workflow.waited.settled',
+          visible: settled,
           activity: true,
         });
       }
@@ -1053,13 +1052,23 @@ function createPiRuntimeService({ app, configStore, aiService, isMonitorActive, 
         },
       };
       if (persistentTask) {
-        await writeJsonAsync(persistentTask.paths.resultFile, result);
-        checkpointPersistentTask({
-          status: 'running',
-          phase: activeTask.workflow_stage,
-          agent_connection: 'idle',
-          session_file: session.sessionFile ? path.basename(session.sessionFile) : persistentTask.state.session_file || '',
-        });
+        try {
+          await savePersistentAgentResult(app, persistentConfig.task_key, result);
+        } catch (error) {
+          // 结果文件写失败不应把已完成任务报成失败：内存结果原样返回业务侧。
+          console.error('[pi-runtime] 持久任务结果文件写入失败', error?.message || String(error));
+        }
+        try {
+          checkpointPersistentTask({
+            status: 'running',
+            phase: activeTask.workflow_stage,
+            agent_connection: 'idle',
+            session_file: session.sessionFile ? path.basename(session.sessionFile) : persistentTask.state.session_file || '',
+          });
+        } catch (error) {
+          // 终结检查点写失败时状态文件停留在最后一次成功检查点（任务已完成，无害）。
+          console.error('[pi-runtime] 持久任务终结检查点写入失败', error?.message || String(error));
+        }
       }
       emitMonitorEvent({
         type: 'task_end',
@@ -1084,14 +1093,19 @@ function createPiRuntimeService({ app, configStore, aiService, isMonitorActive, 
       try { output = await readOutputAsync(workspaceDir, outputFile); } catch {}
       if (persistentTask) {
         archivedWorkspace = workspaceDir;
-        const current = loadPersistentAgentTask(app, persistentConfig.task_key);
-        checkpointPersistentTask({
-          status: error?.code === 'AGENT_DISCONNECTED' ? 'interrupted' : 'error',
-          phase: activeTask.workflow_stage,
-          agent_connection: 'idle',
-          error: error?.message || String(error),
-          session_file: session?.sessionFile ? path.basename(session.sessionFile) : current?.state?.session_file || '',
-        });
+        try {
+          const current = loadPersistentAgentTask(app, persistentConfig.task_key);
+          checkpointPersistentTask({
+            status: error?.code === 'AGENT_DISCONNECTED' ? 'interrupted' : 'error',
+            phase: activeTask.workflow_stage,
+            agent_connection: 'idle',
+            error: error?.message || String(error),
+            session_file: session?.sessionFile ? path.basename(session.sessionFile) : current?.state?.session_file || '',
+          });
+        } catch (checkpointError) {
+          // 终结检查点失败不得掩盖任务真实错误（保留原始错误继续上抛）。
+          console.error('[pi-runtime] 持久任务终结检查点写入失败', checkpointError?.message || String(checkpointError));
+        }
       } else {
         archivedWorkspace = workspaceDir;
         retainTransientWorkspace = true;

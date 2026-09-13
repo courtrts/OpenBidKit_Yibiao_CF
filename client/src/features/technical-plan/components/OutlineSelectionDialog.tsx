@@ -184,6 +184,9 @@ function OutlineSelectionDialog({
                 {selection.auto_answer_at && (
                   <small>{countdownSeconds} 秒后自动提交默认选择</small>
                 )}
+                {selection.auto_submit_failed && (
+                  <small>自动确认未成功，请手动提交</small>
+                )}
               </div>
             </div>
             <div className="outline-selection-buttons">

@@ -352,11 +352,16 @@ function createAgentService({ app, configStore, aiService, licenseService, autoC
             question_id: question.question_id,
             option_id: recommendedOption.id,
           }),
-          onStateChange: ({ auto_answer_at: autoAnswerAt }) => {
+          onStateChange: ({ auto_answer_at: autoAnswerAt, auto_submit_failed: autoSubmitFailed }) => {
             if (!pendingQuestions.has(questionId)) return;
             if (autoAnswerAt) entry.question.auto_answer_at = autoAnswerAt;
             else delete entry.question.auto_answer_at;
+            if (autoSubmitFailed) entry.question.auto_submit_failed = true;
+            else delete entry.question.auto_submit_failed;
             emitQuestionState();
+          },
+          onSubmitError: (error) => {
+            console.error('[agent] 自动回答提交失败', error?.message || String(error));
           },
         });
       }

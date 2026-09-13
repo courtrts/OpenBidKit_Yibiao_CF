@@ -38,6 +38,7 @@ export interface OutlineSelectionState {
   selected_ids: string[];
   confirmed: boolean;
   auto_answer_at?: string;
+  auto_submit_failed?: boolean;
 }
 
 export interface SaveOutlineSelectionRequest {

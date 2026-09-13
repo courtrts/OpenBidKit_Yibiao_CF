@@ -4,6 +4,7 @@ const {
   getAgentRuntimeDir,
   getGeneratedImagesDir,
   getLocalParseCacheDir,
+  getLocalRenderTempDir,
   getWorkspaceDir,
 } = require('../utils/paths.cjs');
 const { getMermaidCacheDir } = require('../utils/mermaidCache.cjs');
@@ -246,6 +247,9 @@ function sweepAgedStartupArtifacts(app) {
     // 文档解析缓存（fileService）：键随源文件 size/mtime 变化，源文件改动后旧键成孤儿，
     // 按 mtime 锚点 30 天清扫防止无限膨胀（与 mermaid 缓存同口径）
     { label: '文档解析缓存', dir: getLocalParseCacheDir(app), maxAge: 30 * day },
+    // 本地转图渲染临时文件（localImageRenderService，系统临时区）：渲染 HTML 页面
+    // 正常路径即用即删，进程崩溃会泄漏；24 小时 mtime 锚点清扫兜底（小文件、无敏感内容）
+    { label: '本地转图渲染临时文件', dir: getLocalRenderTempDir(), maxAge: 1 * day },
   ];
   for (const { label, dir, maxAge } of targets) {
     try {

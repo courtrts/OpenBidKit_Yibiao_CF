@@ -1,8 +1,8 @@
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { BrowserWindow, app: electronApp, nativeImage } = require('electron');
+const { getLocalRenderTempDir } = require('../utils/paths.cjs');
 
 const DEFAULT_COMPONENT_CONCURRENCY = 5;
 const MIN_COMPONENT_CONCURRENCY = 1;
@@ -24,6 +24,9 @@ const HTML_RENDER_TIMEOUT_MS = 120000;
 const MAX_CAPTURE_SEGMENT_HEIGHT = 8192;
 const LAYOUT_SETTLE_MS = 120;
 const PAUSE_POLL_MS = 100;
+// HTML/Mermaid 本地截图高度硬上限（设计 px）：失控超长页面/图（AI 产出异常）会让
+// stitchPngVertically 分配 GB 级 Buffer 直接 OOM 主进程，超限抛错走既有修复/重试通道
+const MAX_CONTENT_CAPTURE_HEIGHT = 20000;
 
 let serviceInstance = null;
 
@@ -377,7 +380,13 @@ function buildHtmlLayoutProbeScript() {
       const rect=element.getBoundingClientRect();
       if(rect.width>0&&rect.height>0&&(rect.left<rootRect.left-1||rect.right>rootRect.right+1)){add('元素横向超出截图画布：'+label(element));}
     }
-    if(!textEntries.length&&!root.querySelector('img,svg,canvas,video'))add('截图画布没有可见内容');
+    const imgs=Array.from(root.querySelectorAll('img'));
+    for(const img of imgs){
+      if(!visible(img))continue;
+      // 加载失败/地址无效的 img：complete 恒真但 naturalWidth=0，静默留白必须被质检拦截
+      if(img.complete&&!(img.naturalWidth>0))add('图片加载失败：'+label(img));
+    }
+    if(!textEntries.length&&!root.querySelectorAll('img,svg,canvas,video').length)add('截图画布没有可见内容');
     return issues;
   })()`;
 }
@@ -591,7 +600,7 @@ function buildMermaidDocument(code, mermaidScriptUrl) {
 // 写入临时 HTML 文件并加载，便于引用本地 mermaid 脚本；加载期间响应暂停。
 async function loadHtmlDocument(win, html, timeoutMs, options = {}) {
   throwIfPaused(options);
-  const tempDir = path.join(os.tmpdir(), 'yibiao-local-image-render');
+  const tempDir = getLocalRenderTempDir();
   fs.mkdirSync(tempDir, { recursive: true });
   const tempFile = path.join(tempDir, `render-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.html`);
   fs.writeFileSync(tempFile, html, 'utf-8');
@@ -635,7 +644,9 @@ async function loadHtmlDocument(win, html, timeoutMs, options = {}) {
           finish(options.createPauseError?.() || new Error('转图已暂停'));
           return;
         }
-        finish(new Error(`加载渲染页面失败：${description || code}`));
+        // 不把 Chromium 错误码（ERR_*）暴露给用户，诊断细节进开发者日志
+        console.error('[local-image-render] 渲染页面加载失败:', code, description || '');
+        finish(new Error('本地渲染页面加载失败'));
       };
 
       win.webContents.once('did-finish-load', onLoad);
@@ -645,7 +656,8 @@ async function loadHtmlDocument(win, html, timeoutMs, options = {}) {
           finish(options.createPauseError?.() || new Error('转图已暂停'));
           return;
         }
-        finish(error);
+        console.error('[local-image-render] 渲染页面加载失败:', error?.message || String(error));
+        finish(new Error('本地渲染页面加载失败'));
       });
     });
   } finally {
@@ -738,6 +750,12 @@ function createLocalImageRenderService({ configStore } = {}) {
         }
         const width = Math.min(WORD_FRIENDLY_RENDER_WIDTH, Math.max(1, rawWidth));
         const height = Math.max(1, rawHeight);
+        // 与 HTML 共用高度硬上限：Mermaid 页只对宽度等比缩小、高度不缩放，失控高图
+        // 会让拼接分配 GB 级 Buffer OOM；超限抛错由 Mermaid 修复回路把错误喂模型
+        // 简化图、导出侧走 loadRetry 失败通道
+        if (height > MAX_CONTENT_CAPTURE_HEIGHT) {
+          throw new Error(`Mermaid 图面高度 ${height}px 超过 ${MAX_CONTENT_CAPTURE_HEIGHT}px 上限，已中止截图`);
+        }
         return await withTimeout(
           captureFullContent(win.webContents, width, height, {
             ...options,
@@ -773,7 +791,13 @@ function createLocalImageRenderService({ configStore } = {}) {
         );
         const width = Math.max(HTML_DESIGN_WIDTH, Math.ceil(metrics.width || 0));
         const height = Math.max(1, Math.ceil(metrics.height || 0));
-        const layoutIssues = await probeHtmlLayoutIssues(win.webContents);
+        // 页面内重叠检测是 O(n²)，病态页面可让 executeJavaScript 永久挂起；
+        // race 语义会消费迟到的 reject（无 unhandled rejection），超时后 finally 销毁窗口
+        const layoutIssues = await withTimeout(
+          probeHtmlLayoutIssues(win.webContents),
+          HTML_RENDER_TIMEOUT_MS,
+          'HTML 布局质检超时',
+        );
         return { width, height, layout_issues: layoutIssues };
       } finally {
         destroyWindow(win);
@@ -802,13 +826,17 @@ function createLocalImageRenderService({ configStore } = {}) {
           'HTML 布局等待超时',
         );
         const width = Math.max(HTML_DESIGN_WIDTH, Math.ceil(metrics.width || 0));
-        // 高度硬上限：失控的超长页面（AI 产出异常 HTML）会让拼接分配 GB 级 Buffer 直接 OOM，
-        // 超限抛错走既有失败/重试通道
-        const MAX_HTML_CAPTURE_HEIGHT = 20000;
-        if (height > MAX_HTML_CAPTURE_HEIGHT) {
-          throw new Error(`HTML 页面高度 ${height}px 超过 ${MAX_HTML_CAPTURE_HEIGHT}px 上限，已中止截图`);
+        // 高度硬上限（与 Mermaid 共用 MAX_CONTENT_CAPTURE_HEIGHT）：失控的超长页面
+        // （AI 产出异常 HTML）会让拼接分配 GB 级 Buffer 直接 OOM，超限抛错走既有失败/重试通道
+        if (height > MAX_CONTENT_CAPTURE_HEIGHT) {
+          throw new Error(`HTML 页面高度 ${height}px 超过 ${MAX_CONTENT_CAPTURE_HEIGHT}px 上限，已中止截图`);
         }
-        const layoutIssues = await probeHtmlLayoutIssues(win.webContents);
+        // 页面内重叠检查 O(n²)，病态页面可让主进程永久挂起，总超时兜底
+        const layoutIssues = await withTimeout(
+          probeHtmlLayoutIssues(win.webContents),
+          HTML_RENDER_TIMEOUT_MS,
+          'HTML 布局质检超时',
+        );
         throwIfPaused(options, 'HTML 转图已暂停');
         const captured = await withTimeout(
           captureFullContent(win.webContents, width, height, {

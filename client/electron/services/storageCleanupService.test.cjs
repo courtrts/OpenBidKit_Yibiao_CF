@@ -124,6 +124,18 @@ test('sweepAgedStartupArtifacts 按 mtime 锚点清扫文档解析缓存超龄�
   assert.ok(fs.existsSync(path.join(cacheDir, 'fresh.md')), '近期缓存必须保留');
 });
 
+test('sweepAgedStartupArtifacts 覆盖本地转图渲染临时目录（崩溃泄漏 24 小时兜底）', () => {
+  // 渲染临时目录在系统临时区（os.tmpdir），无法注入假 app 做行为测试；
+  // 清扫机制（mtime 锚点/删除/剪枝）已由上方测试覆盖，这里锁定目标注册与写入路径同源
+  const { getLocalRenderTempDir } = require('../utils/paths.cjs');
+  const serviceSource = fs.readFileSync(path.join(__dirname, 'storageCleanupService.cjs'), 'utf-8');
+  assert.match(serviceSource, /label: '本地转图渲染临时文件', dir: getLocalRenderTempDir\(\), maxAge: 1 \* day/);
+  const renderSource = fs.readFileSync(path.join(__dirname, 'localImageRenderService.cjs'), 'utf-8');
+  assert.match(renderSource, /getLocalRenderTempDir\(\)/);
+  assert.match(renderSource, /require\('\.\.\/utils\/paths\.cjs'\)/);
+  assert.ok(getLocalRenderTempDir().endsWith(path.join('yibiao-local-image-render')), '目录名固定防漂移');
+});
+
 // ---- collectGeneratedImageReferences：共享引用收集 ----
 
 test('collectGeneratedImageReferences 收集根级与子目录相对路径并解码', () => {

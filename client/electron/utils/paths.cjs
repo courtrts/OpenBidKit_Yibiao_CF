@@ -1,3 +1,4 @@
+const os = require('node:os');
 const path = require('node:path');
 
 function getUserDataPath(app) {
@@ -120,6 +121,13 @@ function getLocalParseCacheDir(app) {
   return path.join(getUserDataPath(app), 'cache', 'parse-cache');
 }
 
+/** 本地转图渲染临时目录（localImageRenderService）：系统临时区下的短生命周期
+ *  渲染 HTML 页面，成功路径即删；由 storageCleanupService 启动时按 mtime 锚点
+ *  清扫 24 小时超龄文件，兜底崩溃泄漏。 */
+function getLocalRenderTempDir() {
+  return path.join(os.tmpdir(), 'yibiao-local-image-render');
+}
+
 function getKnowledgeBaseDir(app) {
   return path.join(getWorkspaceDir(app), 'knowledge-base');
 }
@@ -215,6 +223,7 @@ module.exports = {
   getGeneratedImagesDir,
   getImportedImagesDir,
   getLocalParseCacheDir,
+  getLocalRenderTempDir,
   getKnowledgeBaseDir,
   getLicenseFilePath,
   getOpenXmlHelperDebugExecutablePath,

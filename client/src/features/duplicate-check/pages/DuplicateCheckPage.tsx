@@ -567,7 +567,7 @@ function DuplicateAnalysisPane({ activeTab, onTabChange, metadataAnalysis, outli
                 : item.id === 'image'
                   ? imageAnalysis?.status || 'pending'
                   : 'pending';
-          const progress = item.id === 'metadata'
+          const rawProgress = item.id === 'metadata'
             ? metadataProgress
             : item.id === 'outline'
               ? outlineAnalysis?.progress || 0
@@ -576,6 +576,9 @@ function DuplicateAnalysisPane({ activeTab, onTabChange, metadataAnalysis, outli
                 : item.id === 'image'
                   ? imageAnalysis?.progress || 0
                   : 0;
+          // error 终态 99 封顶（展示层双保险：onTaskEvent 活补丁路径不经 store 读路径，
+          // 与 store 端 capTerminalProgress 同口径；metadata 分支已由 metadataProgress 封顶，Math.min 幂等）
+          const progress = status === 'error' ? Math.min(99, rawProgress) : rawProgress;
           const isRunning = status === 'running';
 
           return (

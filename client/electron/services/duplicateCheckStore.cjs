@@ -59,6 +59,14 @@ function normalizeStatus(value, allowed, fallback) {
   return allowed.includes(value) ? value : fallback;
 }
 
+// error 终态 99 封顶（读写路径统一口径，R91-R109 既定）：error 行不得显示 100%，
+// 非 error 状态仅做 [0,100] clamp 不封顶；入参取库内原始 status（归一前），
+// 与展示层「状态为 error 才封顶」的判定同语义。
+function capTerminalProgress(status, progress) {
+  const clamped = Math.max(0, Math.min(100, Math.round(Number(progress || 0))));
+  return status === 'error' ? Math.min(99, clamped) : clamped;
+}
+
 function stableFileId(file) {
   return file?.id || crypto.createHash('sha1').update(String(file?.file_path || file?.file_name || '')).digest('hex');
 }
@@ -124,7 +132,8 @@ function taskFromRow(row, taskLogStore) {
     task_id: row.task_id,
     type: row.type,
     status: normalizeStatus(row.status, ['running', 'success', 'error'], 'running'),
-    progress: Number(row.progress || 0),
+    // 读路径集中口径：自愈 R98 前落盘的存量 error+100 任务行（rejectionCheckStore/knowledgeBaseStore 同模式）
+    progress: capTerminalProgress(row.status, row.progress),
     logs: taskLogStore.list('duplicate-check', row.type, row.task_id),
     started_at: row.started_at,
     updated_at: row.updated_at,
@@ -325,7 +334,8 @@ function createDuplicateCheckStore({ app, db, taskLogStore }) {
       type,
       task_id: String(task.task_id || ''),
       status: String(task.status || 'running'),
-      progress: Math.max(0, Math.min(100, Math.round(Number(task.progress || 0)))),
+      // 写路径纵深：error 终态入库前封顶 99（与读路径 capTerminalProgress 同口径）
+      progress: capTerminalProgress(task.status, task.progress),
       stats_json: jsonOrNull(task.stats),
       error: task.error ? String(task.error) : null,
       payload_signature: task.payload_signature ? String(task.payload_signature) : null,
@@ -365,9 +375,11 @@ function createDuplicateCheckStore({ app, db, taskLogStore }) {
     `).run({
       section,
       status: hasOwn(analysis, 'status') ? String(analysis.status || 'pending') : existing?.status || 'pending',
-      progress: hasOwn(analysis, 'progress')
-        ? Math.max(0, Math.min(100, Math.round(Number(analysis.progress || 0))))
-        : Number(existing?.progress || 0),
+      // 写路径纵深：error 终态入库前封顶 99（与读路径 capTerminalProgress 同口径）
+      progress: capTerminalProgress(
+        hasOwn(analysis, 'status') ? analysis.status : existing?.status,
+        hasOwn(analysis, 'progress') ? analysis.progress : existing?.progress,
+      ),
       message: hasOwn(analysis, 'message') ? String(analysis.message || '') : existing?.message || '',
       signature: hasOwn(analysis, 'signature')
         ? analysis.signature ? String(analysis.signature) : null
@@ -667,7 +679,8 @@ function createDuplicateCheckStore({ app, db, taskLogStore }) {
     const files = Array.from(filesById.values());
     return {
       status: normalizeStatus(row.status, ['pending', 'running', 'success', 'error'], 'pending'),
-      progress: Number(row.progress || 0),
+      // 读路径集中口径：自愈 R98 前落盘的存量 error+100 section 行（四 section 同表达式）
+      progress: capTerminalProgress(row.status, row.progress),
       message: row.message || '',
       signature: row.signature || undefined,
       started_at: row.started_at || undefined,
@@ -756,7 +769,8 @@ function createDuplicateCheckStore({ app, db, taskLogStore }) {
     }));
     return {
       status: normalizeStatus(row.status, ['pending', 'running', 'success', 'error'], 'pending'),
-      progress: Number(row.progress || 0),
+      // 读路径集中口径：自愈 R98 前落盘的存量 error+100 section 行（四 section 同表达式）
+      progress: capTerminalProgress(row.status, row.progress),
       message: row.message || '',
       signature: row.signature || undefined,
       started_at: row.started_at || undefined,
@@ -790,7 +804,8 @@ function createDuplicateCheckStore({ app, db, taskLogStore }) {
     }));
     return {
       status: normalizeStatus(row.status, ['pending', 'running', 'success', 'error'], 'pending'),
-      progress: Number(row.progress || 0),
+      // 读路径集中口径：自愈 R98 前落盘的存量 error+100 section 行（四 section 同表达式）
+      progress: capTerminalProgress(row.status, row.progress),
       message: row.message || '',
       signature: row.signature || undefined,
       started_at: row.started_at || undefined,
@@ -835,7 +850,8 @@ function createDuplicateCheckStore({ app, db, taskLogStore }) {
     }));
     return {
       status: normalizeStatus(row.status, ['pending', 'running', 'success', 'error'], 'pending'),
-      progress: Number(row.progress || 0),
+      // 读路径集中口径：自愈 R98 前落盘的存量 error+100 section 行（四 section 同表达式）
+      progress: capTerminalProgress(row.status, row.progress),
       message: row.message || '',
       signature: row.signature || undefined,
       started_at: row.started_at || undefined,

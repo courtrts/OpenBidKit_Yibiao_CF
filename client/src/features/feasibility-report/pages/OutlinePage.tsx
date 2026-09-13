@@ -186,10 +186,10 @@ function OutlinePage({
     try {
       await onConfigChange(config);
       setDialogOpen(false);
-    } catch (error) {
-      // 父级已 toast 提示失败；保持弹窗打开让用户重试或取消
-      if (!showToast) return;
-      void showToast;
+    } catch {
+      // 父级已 toast 提示失败；保持弹窗打开让用户重试或取消，
+      // 不能继续 onStart——否则配置未落库而任务按新参数启动，产生持久化错位。
+      return;
     }
     await onStart(config);
   };

@@ -628,6 +628,16 @@ function createPiRuntimeService({ app, configStore, aiService, isMonitorActive, 
       }
       answered = true;
       return result;
+    } catch (error) {
+      // 提问因预期中断失效（用户取消、任务结束、服务关闭）时升级为整任务中止，
+      // 避免降级为模型可见的工具错误导致 Agent 重复提问。
+      const code = String(error?.code || '');
+      if (activeTask?.task_token === taskToken
+        && (code === 'TASK_CANCELLED' || code === 'AGENT_DISCONNECTED')
+        && !activeController?.signal.aborted) {
+        activeController.abort(error);
+      }
+      throw error;
     } finally {
       if (activeTask?.task_token === taskToken) {
         activeTask.waiting_for_user = false;

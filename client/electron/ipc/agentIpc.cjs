@@ -35,6 +35,7 @@ function registerAgentIpc({ agentService }) {
     return agentService.getPendingQuestion();
   });
   ipcMain.handle('agent:answer-question', async (_event, payload) => agentService.answerQuestion(payload));
+  ipcMain.handle('agent:cancel-question', async (_event, payload) => agentService.cancelQuestion(payload));
   ipcMain.handle('agent:suppress-question-auto-answer', async (_event, payload) => agentService.suppressQuestionAutoAnswer(payload));
   ipcMain.on('agent:subscribe', (event) => subscribe(event.sender));
 

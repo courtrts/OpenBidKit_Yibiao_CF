@@ -26,6 +26,7 @@ export function AgentQuestionDialogProvider({ children }: { children: ReactNode 
   const [selectedOptionId, setSelectedOptionId] = useState('');
   const [customAnswer, setCustomAnswer] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [autoAnswerEnabled, setAutoAnswerEnabledState] = useState(false);
   const [autoAnswerSaving, setAutoAnswerSaving] = useState(false);
   const [countdownSeconds, setCountdownSeconds] = useState(0);
@@ -71,6 +72,7 @@ export function AgentQuestionDialogProvider({ children }: { children: ReactNode 
     setSelectedOptionId('');
     setCustomAnswer('');
     setSubmitting(false);
+    setCancelling(false);
   }, [question?.question_id]);
 
   const recommendedOption = question?.options.find((option) => option.recommended && !option.custom);
@@ -130,6 +132,20 @@ export function AgentQuestionDialogProvider({ children }: { children: ReactNode 
     } catch (error) {
       showToast(error instanceof Error ? error.message : '提交回答失败，请重试', 'error');
       setSubmitting(false);
+    }
+  };
+
+  // 取消提问所属任务：Main 侧按任务取消口径终止，问题清空后对话框自动关闭。
+  const cancelQuestion = async () => {
+    if (!question || cancelling || submitting) return;
+    const questionId = question.question_id;
+    setCancelling(true);
+    try {
+      await window.yibiao.agent.cancelQuestion({ question_id: questionId });
+      setQuestion((current) => (current?.question_id === questionId ? null : current));
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '取消失败，请重试', 'error');
+      setCancelling(false);
     }
   };
 
@@ -216,6 +232,14 @@ export function AgentQuestionDialogProvider({ children }: { children: ReactNode 
                   <small>{countdownSeconds} 秒后自动执行“{recommendedOption.label}”</small>
                 )}
               </div>
+              <button
+                type="button"
+                className="secondary-action"
+                disabled={cancelling || submitting}
+                onClick={() => void cancelQuestion()}
+              >
+                {cancelling ? '正在取消...' : '取消任务'}
+              </button>
               <button
                 type="button"
                 className="primary-action"

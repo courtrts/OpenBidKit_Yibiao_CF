@@ -328,7 +328,7 @@ function createAgentService({ app, configStore, aiService, licenseService, autoC
       is_primary: isPrimarySession(request),
     };
 
-    return new Promise((resolve, reject) => {
+    const promise = new Promise((resolve, reject) => {
       const entry = {
         question,
         resolve,
@@ -363,6 +363,10 @@ function createAgentService({ app, configStore, aiService, licenseService, autoC
       emitQuestionState();
       emitStatus();
     });
+    // 安全网：任务/服务先于提问终结时该 promise 可能无人 await，
+    // 吞掉未处理拒绝（真实消费者仍照常收到拒绝结果）。
+    promise.catch(() => undefined);
+    return promise;
   }
 
   // 用户切换选项后停止当前 Agent 问题的自动回答计时。
@@ -393,7 +397,19 @@ function createAgentService({ app, configStore, aiService, licenseService, autoC
     return { success: true };
   }
 
+  // 用户取消当前提问：按任务取消口径了结问题并停止自动回答计时。
+  // TASK_CANCELLED 属预期中断口径，pi 运行时会据此中止任务且不计失败统计。
+  function cancelQuestion(payload = {}) {
+    const entry = pendingQuestions.get(String(payload?.question_id || ''));
+    if (!entry) throw new Error('该问题不存在或已处理');
+    const error = createAbortError(entry.signal);
+    clearPendingQuestion(entry);
+    entry.reject(error);
+    return { success: true };
+  }
+
   function ensureServiceRuntime() {
+    if (closing) throw new Error('Agent 服务正在关闭');
     if (serviceRuntime) return serviceRuntime;
     serviceRuntime = createPiRuntimeService({
       app,
@@ -530,6 +546,9 @@ function createAgentService({ app, configStore, aiService, licenseService, autoC
     if (closing) return Promise.reject(new Error('Agent 服务正在关闭'));
     if (payload.signal?.aborted) return Promise.reject(createAbortError(payload.signal));
     const taskId = payload.task_id || crypto.randomUUID();
+    // 同一 task_id 并发启动会覆盖 activeEntries：旧任务 finally 提前删除新条目、
+    // 错误分支误删新任务运行中的归档目录。拒绝重复而非静默覆盖。
+    if (activeEntries.has(taskId)) return Promise.reject(new Error('同一任务编号已有运行中的任务'));
     const title = payload.title || '易标智能体任务';
     const taskKey = safeText(payload.persistent_task?.task_key);
     const entry = {
@@ -593,6 +612,12 @@ function createAgentService({ app, configStore, aiService, licenseService, autoC
       })
       .finally(async () => {
         activeEntries.delete(taskId);
+        // 任务已终结但仍有未决提问（断连/异常路径未触发 abort 监听时）：
+        // 按任务取消口径了结，避免对话框停在已终结任务上。
+        for (const questionEntry of [...pendingQuestions.values()].filter((item) => item.question.task_id === taskId)) {
+          clearPendingQuestion(questionEntry);
+          questionEntry.reject(createAbortError(questionEntry.signal));
+        }
         try { entry.runtimeUnsubscribe?.(); } catch {}
         entry.runtimeUnsubscribe = null;
         await entry.runtime?.close?.().catch(() => undefined);
@@ -807,6 +832,7 @@ function createAgentService({ app, configStore, aiService, licenseService, autoC
     getPendingQuestion,
     getPendingQuestions,
     answerQuestion,
+    cancelQuestion,
     suppressQuestionAutoAnswer,
     onQuestion,
     getPrimarySession,

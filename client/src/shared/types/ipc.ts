@@ -606,6 +606,7 @@ export interface YibiaoBridge {
     restart: (reason?: string) => Promise<AgentRuntimeStatus>;
     getPendingQuestion: () => Promise<AgentQuestion | null>;
     answerQuestion: (payload: AgentQuestionAnswerPayload) => Promise<AgentQuestionAnswerResult>;
+    cancelQuestion: (payload: { question_id: string }) => Promise<{ success: boolean }>;
     suppressQuestionAutoAnswer: (payload: { question_id: string }) => Promise<{ success: boolean }>;
     onStatus: (callback: (status: AgentRuntimeStatus) => void) => () => void;
     onQuestion: (callback: (question: AgentQuestion | null) => void) => () => void;

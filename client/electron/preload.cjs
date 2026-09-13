@@ -120,6 +120,7 @@ const bridge = {
     restart: (reason) => invoke('agent:restart', reason),
     getPendingQuestion: () => invoke('agent:get-pending-question'),
     answerQuestion: (payload) => invoke('agent:answer-question', payload),
+    cancelQuestion: (payload) => invoke('agent:cancel-question', payload),
     suppressQuestionAutoAnswer: (payload) => invoke('agent:suppress-question-auto-answer', payload),
     onStatus: (callback) => {
       const listener = (_event, payload) => callback(payload);

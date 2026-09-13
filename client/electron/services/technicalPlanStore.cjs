@@ -1204,7 +1204,11 @@ function createTechnicalPlanStore({ app, db, fileService, agentService, taskLogS
     const selectedIds = getBidAnalysisTaskIdsForConfig(mode, selectedTaskIds);
     if (!selectedIds.length) return 0;
     const done = selectedIds.filter((taskId) => ['success', 'error'].includes(bidTasks[taskId]?.status)).length;
-    return Math.round((done / selectedIds.length) * 100);
+    const pct = Math.round((done / selectedIds.length) * 100);
+    // error 终态 99 封顶：任一选中项失败时分组进度不得显示 100%
+    //（与正文生成 done+error 封顶、任务框架失败进度封顶同口径）。
+    const hasError = selectedIds.some((taskId) => bidTasks[taskId]?.status === 'error');
+    return hasError ? Math.min(99, pct) : pct;
   }
 
   function loadOutlineData(meta) {

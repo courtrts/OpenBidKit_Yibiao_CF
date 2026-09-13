@@ -258,6 +258,8 @@ function BidAnalysisPage({
     const status = tasks[task.id]?.status;
     return status === 'success' || status === 'error';
   }).length;
+  // 99 封顶：任一选中项失败时解析进度不得显示 100%（store 端 calculateBidProgress 同口径双保险）
+  const displayProgress = failedTaskCount > 0 ? Math.min(99, progress) : progress;
   const sectionTaskRunning = bidSectionExtractionTask?.status === 'running' || bidSectionExtractionTask?.status === 'pausing';
   const sectionTaskFailed = bidSectionExtractionTask?.status === 'error';
   // 标段识别是独立后台长任务：运行中展示进度/日志，失败时展示原因（原页面零展示位，用户只能看到按钮文案变化）
@@ -669,7 +671,7 @@ function BidAnalysisPage({
             </button>
             {!progressCollapsed && (
               <div className="content-outline-stats-body">
-                <ProgressBar value={progress} label={`解析进度 ${progress}%`} />
+                <ProgressBar value={displayProgress} label={`解析进度 ${displayProgress}%`} />
                 <p>{progressMessage}</p>
               </div>
             )}

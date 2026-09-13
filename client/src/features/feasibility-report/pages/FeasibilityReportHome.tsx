@@ -456,7 +456,8 @@ function FeasibilityReportHome({ registerLeaveGuard, onSectionChange }: Feasibil
         ...prev,
         open: true,
         running: false,
-        progress: 100,
+        // 失败进度封顶 99：error 态显示 100% 会被误读为"导出已完成"
+        progress: 99,
         message,
         error: message,
       }));

@@ -3,7 +3,9 @@ const path = require('node:path');
 const Database = require('better-sqlite3');
 const { getWorkspaceDatabasePath } = require('../utils/paths.cjs');
 
-const schemaVersion = 23;
+// 必须与 migrations 数组最大 version 保持一致（迁移漂移护栏测试见 sqliteDatabase.migration.test.cjs）：
+// 低于最大版本时新装首启会升到超出支持版本、次启被拒，存量用户后续迁移永不执行。
+const schemaVersion = 25;
 
 function createInitialSchema(db) {
   db.exec(`
@@ -1604,4 +1606,7 @@ function createSqliteDatabase(app, options = {}) {
 module.exports = {
   createSqliteDatabase,
   schemaVersion,
+  // 内部执行器导出供迁移漂移护栏测试使用（运行时仅 createSqliteDatabase 消费）
+  migrations,
+  applyMigrations,
 };

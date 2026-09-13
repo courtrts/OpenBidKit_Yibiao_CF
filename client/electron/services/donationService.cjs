@@ -89,7 +89,14 @@ async function requestDonationApi(path, options = {}) {
     const detail = Array.isArray(data?.detail)
       ? data.detail.map((item) => item?.msg).filter(Boolean).join('；')
       : data?.detail;
-    const requestError = new Error(detail || text || `打赏服务请求失败：HTTP ${response.status}`);
+    // 非 JSON 响应（网关 HTML 错误页等）不得把响应体全文抛给打赏弹窗，
+    // 降级为剥标签、清洗截断的纯文本摘要
+    const fallbackText = String(text || '')
+      .replace(/<[^>]*>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 200);
+    const requestError = new Error(detail || fallbackText || `打赏服务请求失败：HTTP ${response.status}`);
     requestError.statusCode = response.status;
     throw requestError;
   }

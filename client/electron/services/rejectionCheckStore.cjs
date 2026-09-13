@@ -155,11 +155,15 @@ function getTechnicalPlanDiscardedBids(technicalPlan) {
 
 function taskFromRow(row, taskLogStore) {
   if (!row) return undefined;
+  const status = normalizeStatus(row.status, ['running', 'success', 'error'], 'running');
+  const clampedProgress = Math.max(0, Math.min(100, Math.round(Number(row.progress || 0))));
   return {
     task_id: row.task_id,
     type: row.type,
-    status: normalizeStatus(row.status, ['running', 'success', 'error'], 'running'),
-    progress: Number(row.progress || 0),
+    status,
+    // error 终态 99 封顶（读路径集中口径）：自愈 R97 前落盘的存量 error+100 任务行，
+    // 与 technicalPlanStore/knowledgeBaseStore 读路径封顶同口径（R91-R108 既定）。
+    progress: status === 'error' ? Math.min(99, clampedProgress) : clampedProgress,
     logs: taskLogStore.list('rejection-check', row.type, row.task_id),
     started_at: row.started_at,
     updated_at: row.updated_at,
@@ -506,6 +510,8 @@ function createRejectionCheckStore({ app, db, fileService, technicalPlanStore, t
       return;
     }
     const timestamp = now();
+    const status = String(task.status || 'running');
+    const clampedProgress = Math.max(0, Math.min(100, Math.round(Number(task.progress || 0))));
     db.prepare(`
       INSERT INTO rejection_check_tasks (type, task_id, status, progress, stats_json, error, started_at, updated_at)
       VALUES (@type, @task_id, @status, @progress, @stats_json, @error, @started_at, @updated_at)
@@ -520,8 +526,9 @@ function createRejectionCheckStore({ app, db, fileService, technicalPlanStore, t
     `).run({
       type,
       task_id: String(task.task_id || ''),
-      status: String(task.status || 'running'),
-      progress: Math.max(0, Math.min(100, Math.round(Number(task.progress || 0)))),
+      status,
+      // error 终态 99 封顶（写路径纵深，与读路径 taskFromRow 同口径）
+      progress: status === 'error' ? Math.min(99, clampedProgress) : clampedProgress,
       stats_json: jsonOrNull(task.stats),
       error: task.error ? String(task.error) : null,
       started_at: task.started_at || timestamp,

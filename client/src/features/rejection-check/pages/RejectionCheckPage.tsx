@@ -115,11 +115,16 @@ function normalizeBackgroundTaskState(state?: Partial<RejectionBackgroundTaskSta
   const status = state.status === 'running' || state.status === 'success' || state.status === 'error' ? state.status : undefined;
   if (!type || !status || typeof state.task_id !== 'string') return undefined;
 
+  // 展示层双保险：onTaskEvent 活补丁路径不经 store 读路径，
+  // 与 store 端 taskFromRow 封顶同口径（error 终态不得 100%）
+  const clampedProgress = Number.isFinite(Number(state.progress))
+    ? Math.max(0, Math.min(100, Math.round(Number(state.progress))))
+    : 0;
   return {
     task_id: state.task_id,
     type,
     status,
-    progress: Number.isFinite(Number(state.progress)) ? Number(state.progress) : 0,
+    progress: status === 'error' ? Math.min(99, clampedProgress) : clampedProgress,
     logs: Array.isArray(state.logs) ? state.logs.map((item) => String(item)) : [],
     started_at: typeof state.started_at === 'string' ? state.started_at : new Date().toISOString(),
     updated_at: typeof state.updated_at === 'string' ? state.updated_at : new Date().toISOString(),

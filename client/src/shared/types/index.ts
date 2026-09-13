@@ -43,6 +43,7 @@ export type {
   AgentModeScenariosConfig,
   ClientConfig,
   ConfigSaveResult,
+  ConfigStatusResult,
   ComponentsConfig,
   FileParserConfig,
   FileParserProvider,

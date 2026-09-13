@@ -775,11 +775,45 @@ function normalizeConfig(config) {
   };
 }
 
+// 导入配置的体积上限：正常配置 JSON 只有几 KB，超过 1MB 一定是误选文件。
+const MAX_IMPORTED_CONFIG_BYTES = 1024 * 1024;
+
+// 解析导入的配置文本：校验体积/JSON/对象结构，并剥离分析身份字段。
+// 剥离原因：analytics_client_id 是本机确定性机器摘要（machineIdentity），
+// 导入他机配置不应迁移统计身份，避免跨机身份转移造成聚合口径漂移；
+// save() 的合并逻辑会以当前配置中的身份为准。
+function parseImportedConfig(rawText) {
+  const text = String(rawText ?? '');
+  if (Buffer.byteLength(text, 'utf-8') > MAX_IMPORTED_CONFIG_BYTES) {
+    throw new Error('导入的配置内容过大（超过 1MB），已拒绝导入。');
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error('导入的文件不是有效的 JSON，已拒绝导入。');
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('导入的内容格式不正确（应为配置 JSON 对象），已拒绝导入。');
+  }
+
+  // 保留本机统计身份：忽略导入文件携带的 analytics 身份字段，
+  // 防止跨机身份迁移导致统计聚合口径漂移。
+  const rest = { ...parsed };
+  delete rest.analytics_client_id;
+  delete rest.analytics_created_at;
+  return rest;
+}
+
 function createConfigStore(app) {
   const configFile = getConfigFilePath(app);
   // 进程内缓存（配置文件的唯一写者是本应用，save() 同步更新缓存）：
   // AI 热路径每次请求会多次 load()，避免每次都全文件读盘 + parse + normalize。
   let cachedConfig = null;
+  // 本次进程内的损坏自愈记录（供设置页 config:status 展示，不落配置字段）
+  let lastRecovery = null;
 
   function persist(config) {
     let tempFile = '';
@@ -808,6 +842,56 @@ function createConfigStore(app) {
     };
   }
 
+  // 从损坏的原始文本中尽力恢复分析身份字段（正则级，不依赖 JSON 可解析）：
+  // client_id 本身是确定性机器摘要、重建后同值，created_at（首次识别日期）
+  // 无法重建，恢复它避免统计口径中"首次出现时间"漂移。
+  function salvageAnalyticsIdentity(rawText) {
+    const salvaged = {};
+    const clientId = String(rawText ?? '').match(/"analytics_client_id"\s*:\s*"([^"]*)"/);
+    const createdAt = String(rawText ?? '').match(/"analytics_created_at"\s*:\s*"([^"]*)"/);
+    if (clientId && clientId[1]) salvaged.analytics_client_id = clientId[1];
+    if (createdAt && createdAt[1]) salvaged.analytics_created_at = createdAt[1];
+    return salvaged;
+  }
+
+  // 限制损坏备份文件数量，避免长期累积占盘。
+  function pruneCorruptedBackups(maxKeep) {
+    const dir = path.dirname(configFile);
+    const prefix = `${path.basename(configFile)}.corrupt-`;
+    const entries = fs.readdirSync(dir)
+      .filter((name) => name.startsWith(prefix))
+      .map((name) => ({ name, stamp: Number(name.slice(prefix.length)) || 0 }))
+      .sort((a, b) => b.stamp - a.stamp);
+    entries.slice(maxKeep).forEach((entry) => {
+      try { fs.rmSync(path.join(dir, entry.name), { force: true }); } catch {}
+    });
+  }
+
+  // 损坏文件自愈：把损坏的 config 重命名为 .corrupt-<ts> 备份（用户/支持可找回），
+  // 返回从原始文本中抢救的分析身份。重命名失败（文件被编辑器/杀毒占用）时
+  // 给出可行动的明确提示而不是让应用卡死在初始化。
+  function recoverCorruptedConfig(rawText) {
+    const salvaged = salvageAnalyticsIdentity(rawText);
+    const backupFile = `${configFile}.corrupt-${Date.now()}`;
+    try {
+      fs.renameSync(configFile, backupFile);
+    } catch (error) {
+      console.error('[config] 损坏配置文件备份失败（文件可能被占用）', error);
+      throw new Error('配置文件已损坏且被其他程序占用，无法自动修复。请关闭正在打开该文件的程序（如记事本、代码编辑器）后重启应用。');
+    }
+    try {
+      pruneCorruptedBackups(3);
+    } catch (error) {
+      console.warn('[config] 清理旧损坏备份失败', error?.message || String(error));
+    }
+    lastRecovery = {
+      recovered: true,
+      backup_file: path.basename(backupFile),
+      at: new Date().toISOString(),
+    };
+    return { backupFile, salvaged };
+  }
+
   return {
     getConfigFilePath() {
       return configFile;
@@ -820,25 +904,65 @@ function createConfigStore(app) {
       }
 
       if (!fs.existsSync(configFile)) {
-        const config = withAnalyticsIdentity(normalizeConfig());
-        persist(config);
+        // 全新安装：初始化默认配置。写盘失败转统一文案（诊断明细进日志，不外带本地路径）
+        try {
+          const config = withAnalyticsIdentity(normalizeConfig());
+          persist(config);
+          cachedConfig = config;
+          return structuredClone(config);
+        } catch (error) {
+          console.error('[config] 配置文件初始化失败', error);
+          throw new Error('配置文件初始化失败：请检查磁盘空间和写入权限。');
+        }
+      }
+
+      let raw;
+      try {
+        raw = fs.readFileSync(configFile, 'utf-8');
+      } catch (error) {
+        // IO 失败（文件被占用/无权限）：不做自动修复，给出可行动提示
+        console.error('[config] 配置文件读取失败', error);
+        throw new Error('配置文件读取失败：请检查文件是否被其他程序占用，或是否具有读取权限。');
+      }
+
+      let parsedConfig;
+      try {
+        parsedConfig = JSON.parse(raw);
+      } catch (error) {
+        // 配置文件损坏（如用户通过"打开配置文件夹"手改引入语法错误）：
+        // 备份损坏文件并以默认配置继续（自愈），损坏文件不再永久阻塞应用启动；
+        // 分析身份尽力从原始文本恢复（client_id 为确定性机器摘要、created_at 无法重建）
+        const { salvaged } = recoverCorruptedConfig(raw);
+        // 重置为完整默认配置（与全新安装同口径，避免 normalizeConfig({}) 落入
+        // "无 provider 字段→custom" 的旧值迁移分支），仅覆盖抢救出的分析身份字段
+        let config;
+        try {
+          config = withAnalyticsIdentity({
+            ...normalizeConfig(),
+            ...(salvaged.analytics_client_id ? { analytics_client_id: salvaged.analytics_client_id } : {}),
+            ...(salvaged.analytics_created_at ? { analytics_created_at: salvaged.analytics_created_at } : {}),
+          });
+          persist(config);
+        } catch (persistError) {
+          console.error('[config] 损坏配置文件自愈后默认配置写入失败', persistError);
+          throw new Error('配置文件已损坏并备份，但默认配置写入失败：请检查磁盘空间和写入权限。');
+        }
         cachedConfig = config;
         return structuredClone(config);
       }
 
-      try {
-        const raw = fs.readFileSync(configFile, 'utf-8');
-        const parsedConfig = JSON.parse(raw);
-        const config = normalizeConfig(parsedConfig);
-        const nextConfig = withAnalyticsIdentity(config);
-        if (JSON.stringify(parsedConfig) !== JSON.stringify(nextConfig)) {
+      const config = normalizeConfig(parsedConfig);
+      const nextConfig = withAnalyticsIdentity(config);
+      // 归一化回写尽力而为：失败不阻塞启动（内存配置已归一化，下次 save 会写盘）
+      if (JSON.stringify(parsedConfig) !== JSON.stringify(nextConfig)) {
+        try {
           persist(nextConfig);
+        } catch (error) {
+          console.warn('[config] 归一化配置回写失败，跳过本次重写', error?.message || String(error));
         }
-        cachedConfig = nextConfig;
-        return structuredClone(nextConfig);
-      } catch (error) {
-        throw new Error(`配置文件读取失败：${error.message}`);
       }
+      cachedConfig = nextConfig;
+      return structuredClone(nextConfig);
     },
 
     save(config) {
@@ -870,8 +994,27 @@ function createConfigStore(app) {
         cachedConfig = nextConfig;
         return { success: true, message: '配置已保存', config_path: configFile };
       } catch (error) {
-        throw new Error(`配置文件保存失败：${error.message}`);
+        // 用户可见文案不带原始 error.message（IO 错误会内嵌本地完整路径），诊断明细进日志
+        console.error('[config] 配置文件保存失败', error);
+        throw new Error('配置文件保存失败：请检查磁盘空间和写入权限。');
       }
+    },
+
+    // 配置文件状态（设置页"配置文件"卡片用）：路径 + 最后修改时间 + 本次进程自愈记录。
+    getStatus() {
+      let updatedAt = 0;
+      try {
+        if (fs.existsSync(configFile)) {
+          updatedAt = fs.statSync(configFile).mtimeMs;
+        }
+      } catch (error) {
+        console.warn('[config] 读取配置文件状态失败', error?.message || String(error));
+      }
+      return {
+        path: configFile,
+        updated_at: updatedAt,
+        recovery: lastRecovery ? { ...lastRecovery } : { recovered: false },
+      };
     },
   };
 }
@@ -879,4 +1022,5 @@ function createConfigStore(app) {
 module.exports = {
   createConfigStore,
   normalizeExportFormat,
+  parseImportedConfig,
 };

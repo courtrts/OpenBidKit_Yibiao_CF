@@ -4,7 +4,7 @@ import { AppDialog, AppSwitch, DetailHelpLink, FloatingToolbar, InlineSpinner, I
 import { showUpdateReadyToast } from '../../../shared/updateToast';
 import { applyThemeMode, isThemeMode, type ThemeMode } from '../../../app/theme';
 import type { FloatingToolbarGroup } from '../../../shared/ui';
-import type { AgentModeScenariosConfig, AgentSelfCheckResult, AgentSelfCheckStepStatus, AiRequestMode, ClientConfig, ComponentsConfig, FileParserProvider, ImageModelConfig, ImageModelProfiles, ImageModelProvider, ImageModelRatio, ImageModelSize, ImageModelStatus, LicenseRuntimeStatus, TextModelConfig, TextModelProfiles, TextModelProvider, UpdateChannel } from '../../../shared/types';
+import type { AgentModeScenariosConfig, AgentSelfCheckResult, AgentSelfCheckStepStatus, AiRequestMode, ClientConfig, ComponentsConfig, ConfigStatusResult, FileParserProvider, ImageModelConfig, ImageModelProfiles, ImageModelProvider, ImageModelRatio, ImageModelSize, ImageModelStatus, LicenseRuntimeStatus, TextModelConfig, TextModelProfiles, TextModelProvider, UpdateChannel } from '../../../shared/types';
 import type { SettingsPageState } from '../types';
 
 type SettingsTab = 'general' | 'text-model' | 'image-model' | 'components' | 'agent' | 'about';
@@ -643,11 +643,16 @@ function SettingsPage({ onDeveloperModeChange, registerLeaveGuard }: SettingsPag
   const [agentSelfCheckResult, setAgentSelfCheckResult] = useState<AgentSelfCheckResult | null>(null);
   const [exportingAgentSelfCheckReport, setExportingAgentSelfCheckReport] = useState(false);
   const [agentAutoAnswerDraft, setAgentAutoAnswerDraft] = useState(false);
+  const [configStatus, setConfigStatus] = useState<ConfigStatusResult | null>(null);
+  const [importConfigDialogOpen, setImportConfigDialogOpen] = useState(false);
+  const [exportingConfig, setExportingConfig] = useState(false);
+  const [importingConfig, setImportingConfig] = useState(false);
   const { showToast } = useToast();
   const { enabled: agentAutoAnswerEnabled } = useAutoAnswer();
 
   useEffect(() => {
     void loadTextConfig();
+    refreshConfigStatus();
     void window.yibiao?.getVersion().then(setAppVersion);
     void window.yibiao?.license?.getStatus().then(setLicenseStatus).catch(() => setLicenseStatus(null));
 
@@ -1228,6 +1233,66 @@ function SettingsPage({ onDeveloperModeChange, registerLeaveGuard }: SettingsPag
     }
   };
 
+  const refreshConfigStatus = () => {
+    void window.yibiao?.config.status().then(setConfigStatus).catch(() => setConfigStatus(null));
+  };
+
+  const exportConfig = async () => {
+    if (exportingConfig) {
+      return;
+    }
+    setExportingConfig(true);
+    try {
+      const result = await window.yibiao?.config.export();
+      if (result?.canceled) {
+        return;
+      }
+      showToast(result?.success ? `配置已导出到：${result.path || '所选文件'}` : result?.message || '配置导出失败', result?.success ? 'success' : 'error');
+      if (result?.success) {
+        refreshConfigStatus();
+      }
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '配置导出失败', 'error');
+    } finally {
+      setExportingConfig(false);
+    }
+  };
+
+  // 确认导入：打开系统文件选择器 → 主进程校验并落盘 → 刷新本页配置与状态。
+  // 导入前已用 AppDialog 明确告知覆盖范围，这里不再二次确认。
+  const confirmImportConfig = async () => {
+    if (importingConfig) {
+      return;
+    }
+    setImportingConfig(true);
+    try {
+      const result = await window.yibiao?.config.import();
+      setImportConfigDialogOpen(false);
+      if (result?.canceled) {
+        return;
+      }
+      showToast(result?.success ? '配置已导入，当前设置已刷新' : result?.message || '配置导入失败', result?.success ? 'success' : 'error');
+      if (result?.success) {
+        await loadTextConfig();
+        refreshConfigStatus();
+      }
+    } catch (error) {
+      setImportConfigDialogOpen(false);
+      showToast(error instanceof Error ? error.message : '配置导入失败', 'error');
+    } finally {
+      setImportingConfig(false);
+    }
+  };
+
+  const formatConfigUpdatedAt = (timestamp: number): string => {
+    if (!timestamp) {
+      return '未知';
+    }
+    const date = new Date(timestamp);
+    const pad = (value: number) => String(value).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  };
+
   const fetchTextModels = async () => {
     try {
       setLoadingModels('text');
@@ -1714,6 +1779,56 @@ function SettingsPage({ onDeveloperModeChange, registerLeaveGuard }: SettingsPag
             </label>
           </div>
 
+          <div className="settings-group-title">配置文件</div>
+          <div className="settings-list">
+            <div className="settings-row">
+              <div className="settings-row-copy">
+                <strong>配置文件位置</strong>
+                <span>
+                  最后修改：{formatConfigUpdatedAt(configStatus?.updated_at || 0)}
+                  {configStatus ? `｜${configStatus.path}` : ''}
+                </span>
+              </div>
+              <div className="settings-action-cell">
+                <button type="button" className="inline-action" onClick={openConfigFolder}>
+                  打开配置文件夹
+                </button>
+              </div>
+            </div>
+            <div className="settings-row">
+              <div className="settings-row-copy">
+                <strong>导出配置</strong>
+                <span>把当前全部设置（含模型 API Key）导出为 JSON 文件，可用于换机迁移或改动前备份</span>
+              </div>
+              <div className="settings-action-cell">
+                <button type="button" className="inline-action" disabled={exportingConfig} onClick={exportConfig}>
+                  {exportingConfig ? '导出中…' : '导出配置'}
+                </button>
+              </div>
+            </div>
+            <div className="settings-row">
+              <div className="settings-row-copy">
+                <strong>导入配置</strong>
+                <span>用之前导出的 JSON 覆盖当前设置；本机统计身份保持不变</span>
+              </div>
+              <div className="settings-action-cell">
+                <button type="button" className="inline-action" onClick={() => setImportConfigDialogOpen(true)}>
+                  导入配置
+                </button>
+              </div>
+            </div>
+            {configStatus?.recovery?.recovered && (
+              <div className="settings-row">
+                <div className="settings-row-copy">
+                  <strong>配置文件已自动修复</strong>
+                  <span>
+                    本次启动检测到配置文件损坏，已自动恢复为默认设置，之前的模型与模板设置可能需要重新填写；损坏文件已备份为 {configStatus.recovery.backup_file || '备份文件'}，可手动找回。
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+
           <div className="settings-group-title">开发者</div>
           <div className="settings-list">
             <label className="settings-row">
@@ -1758,17 +1873,6 @@ function SettingsPage({ onDeveloperModeChange, registerLeaveGuard }: SettingsPag
                   <div className="settings-action-cell">
                     <button type="button" className="inline-action" onClick={openDeveloperAgentMonitorWindow}>
                       打开 Pi Agent 执行监视器
-                    </button>
-                  </div>
-                </div>
-                <div className="settings-row">
-                  <div className="settings-row-copy">
-                    <strong>配置文件夹</strong>
-                    <span>打开本机配置、工作区缓存和开发者日志所在目录</span>
-                  </div>
-                  <div className="settings-action-cell">
-                    <button type="button" className="inline-action" onClick={openConfigFolder}>
-                      打开配置文件夹
                     </button>
                   </div>
                 </div>
@@ -2556,6 +2660,25 @@ function SettingsPage({ onDeveloperModeChange, registerLeaveGuard }: SettingsPag
         open={offlineLicenseDialogOpen}
         onOpenChange={setOfflineLicenseDialogOpen}
         onActivated={setLicenseStatus}
+      />
+      <AppDialog
+        open={importConfigDialogOpen}
+        onOpenChange={(open) => {
+          if (!importingConfig) {
+            setImportConfigDialogOpen(open);
+          }
+        }}
+        kicker="导入配置"
+        title="导入配置将覆盖当前设置"
+        description="选择之前导出的配置 JSON 文件后，将覆盖当前的模型、组件、外观等全部设置；API Key 使用导入文件中的值，本机统计身份保持不变。"
+        actions={(
+          <>
+            <button type="button" className="secondary-action" disabled={importingConfig} onClick={() => setImportConfigDialogOpen(false)}>取消</button>
+            <button type="button" className="primary-action" disabled={importingConfig} onClick={() => { void confirmImportConfig(); }}>
+              {importingConfig ? '正在导入…' : '选择文件并导入'}
+            </button>
+          </>
+        )}
       />
       <AppDialog
         open={Boolean(leaveConfirmResolver)}

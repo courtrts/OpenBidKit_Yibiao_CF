@@ -79,6 +79,9 @@ const bridge = {
   config: {
     load: () => invoke('config:load'),
     save: (config) => invoke('config:save', config),
+    status: () => invoke('config:status'),
+    export: () => invoke('config:export'),
+    import: () => invoke('config:import'),
     listModels: (config) => invoke('config:list-models', config),
     getModelInfo: (modelName) => invoke('config:get-model-info', modelName),
     openConfigFolder: () => invoke('config:open-config-folder'),

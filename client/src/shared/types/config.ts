@@ -28,6 +28,28 @@ export interface ConfigSaveResult {
   config_path?: string;
 }
 
+// 配置文件状态（config:status）：设置页"配置文件"卡片展示用
+export interface ConfigStatusResult {
+  path: string;
+  /** 配置文件最后修改时间（ms 时间戳），文件不存在为 0 */
+  updated_at: number;
+  /** 本次进程启动后是否发生损坏文件自愈及备份文件名 */
+  recovery: {
+    recovered: boolean;
+    backup_file?: string;
+    at?: string;
+  };
+}
+
+// 配置导出/导入结果（config:export / config:import）
+export interface ConfigTransferResult {
+  success: boolean;
+  canceled?: boolean;
+  /** 导出成功时的目标文件路径 */
+  path?: string;
+  message: string;
+}
+
 export interface ModelListResult {
   success: boolean;
   message: string;

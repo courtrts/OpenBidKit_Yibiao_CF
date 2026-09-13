@@ -76,6 +76,8 @@ function normalizeDocument(document) {
   const sourcePath = normalizeRelativePath(document?.source_path || path.join(documentDir, sourceExtension ? `source${sourceExtension}` : 'source'));
   const markdownPath = normalizeRelativePath(document?.markdown_path || path.join(documentDir, 'content.md'));
   const hasSortOrder = hasOwn(document, 'sort_order') || hasOwn(document, 'sortOrder');
+  const status = normalizeStatus(document?.status);
+  const clampedProgress = Math.max(0, Math.min(100, Math.round(Number(document?.progress || 0))));
   return {
     id: documentId,
     folder_id: folderId,
@@ -84,8 +86,9 @@ function normalizeDocument(document) {
     source_path: sourcePath,
     markdown_path: markdownPath,
     source_extension: sourceExtension,
-    status: normalizeStatus(document?.status),
-    progress: Math.max(0, Math.min(100, Math.round(Number(document?.progress || 0)))),
+    status,
+    // error 终态 99 封顶（写路径纵深，与读路径 documentFromRow 同口径）
+    progress: status === 'error' ? Math.min(99, clampedProgress) : clampedProgress,
     message: String(document?.message || '等待处理'),
     error: document?.error ? String(document.error) : undefined,
     item_count: Number(document?.item_count || 0),
@@ -117,6 +120,10 @@ function createKnowledgeBaseStore({ app, db }) {
 
   function documentFromRow(row) {
     if (!row) return null;
+    const clampedProgress = Math.max(0, Math.min(100, Number(row.progress || 0)));
+    // error 终态 99 封顶（读路径集中口径）：R101 前落盘的存量 error+100 行自愈，
+    // 全部消费方（list/getDocument/readReferences/readAnalysis）统一读到封顶后的进度。
+    const progress = row.status === 'error' ? Math.min(99, clampedProgress) : clampedProgress;
     return {
       id: row.document_id,
       folder_id: row.folder_id,
@@ -125,7 +132,7 @@ function createKnowledgeBaseStore({ app, db }) {
       source_path: row.source_path,
       markdown_path: row.markdown_path,
       status: normalizeStatus(row.status),
-      progress: Number(row.progress || 0),
+      progress,
       message: row.message || '',
       item_count: Number(row.item_count || 0),
       block_count: Number(row.block_count || 0),

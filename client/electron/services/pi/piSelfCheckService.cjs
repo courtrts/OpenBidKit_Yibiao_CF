@@ -762,13 +762,23 @@ function normalizeAiDiagnosis(value) {
   };
 }
 
+// JSON 序列化会把反斜杠转义成 \\，本机路径在诊断文本中一律以双反斜杠形态出现，
+// 路径脱敏必须同时兼容转义（\\）与原生（\）两种形态，否则正则永远匹配不上。
+// 段内不含引号/反斜杠/空白：匹配既不会跨 JSON 字符串边界，也不会吞掉路径后的错误位置（:123:45）。
+const WINDOWS_LOCAL_PATH_PATTERN = /[A-Za-z]:(?:\\\\|\\)[^"\\\s]+(?:(?:\\\\|\\)[^"\\\s]+)*/g;
+// POSIX 家目录（/home/<user>、/Users/<user>）；排除前面是字母数字或斜杠的形态，避免误伤 URL 主机路径。
+const POSIX_HOME_PATH_PATTERN = /(?<![A-Za-z0-9/])\/(?:home|Users)\/[^"\\\s]+/g;
+
+// 诊断输入发往文本模型前的净化：凭据类键名置 [REDACTED]，
+// 本机绝对路径（目录快照、错误堆栈）整段替换为占位符，保留错误形态与阶段信息供定位。
 function sanitizeDiagnosisInput(value) {
   const text = JSON.stringify(value, (key, item) => {
     if (/api[_-]?key|authorization|token|password|secret|cookie/i.test(key)) return '[REDACTED]';
     return item;
   });
   return text
-    .replace(/[A-Za-z]:\\Users\\[^\\"\s]+/g, '%USERPROFILE%')
+    .replace(WINDOWS_LOCAL_PATH_PATTERN, '%LOCAL_PATH%')
+    .replace(POSIX_HOME_PATH_PATTERN, '%LOCAL_PATH%')
     .slice(0, 24000);
 }
 
@@ -1072,6 +1082,7 @@ module.exports = {
   runPiLoopbackSelfCheck,
   runPiTextModelSelfCheck,
   runPiToolEnvironmentSelfCheck,
+  sanitizeDiagnosisInput,
   serializeDiagnosticError,
   summarizeTextModelConfig,
   validatePiSessionSnapshot,

@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const XLSX = require('xlsx');
+const { userFacingTaskError } = require('../utils/taskErrorText.cjs');
 
 const EXCEL_TEXT_LIMIT = 32767;
 const EXCEL_TEXT_PREFIX_LIMIT = 32750;
@@ -414,6 +415,11 @@ function createCheckResultExportService({
       fileSystem.renameSync(tempPath, outputPath);
     } catch (writeError) {
       try { fileSystem.unlinkSync(tempPath); } catch { /* 已不存在则忽略 */ }
+      if (writeError && (writeError.code === 'EPERM' || writeError.code === 'EBUSY')) {
+        // Windows 下目标 xlsx 正被 Excel/WPS 打开时 rename 必然失败，原始系统错误用户读不懂，
+        // 转译为可行动的提示（与 docx 导出写盘同口径）。
+        throw new Error('导出失败：目标文件可能正在被打开，请关闭 Excel/WPS 后重试，或另存为其他文件名');
+      }
       throw writeError;
     }
     return { success: true, path: outputPath, message: 'Excel 已导出' };
@@ -432,7 +438,9 @@ function createCheckResultExportService({
         workbook,
       });
     } catch (error) {
-      return { success: false, message: error instanceof Error ? error.message : '废标检查结果导出失败' };
+      // 用户可见错误统一净化（写盘错误可能含文件路径、XLSX 转换可能含内部细节），
+      // 主进程单点捕获，渲染层 result.message 直接上屏净化文案
+      return { success: false, message: userFacingTaskError(error, '废标检查结果导出失败') };
     }
   }
 
@@ -449,7 +457,8 @@ function createCheckResultExportService({
         workbook,
       });
     } catch (error) {
-      return { success: false, message: error instanceof Error ? error.message : '标书查重结果导出失败' };
+      // 用户可见错误统一净化（同上：主进程单点捕获，渲染层 result.message 上屏净化文案）
+      return { success: false, message: userFacingTaskError(error, '标书查重结果导出失败') };
     }
   }
 

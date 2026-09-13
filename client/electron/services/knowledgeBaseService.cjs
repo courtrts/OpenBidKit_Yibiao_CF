@@ -1070,6 +1070,15 @@ function createKnowledgeBaseService({ app, aiService, configStore, knowledgeBase
     }
   }
 
+  // 过期 id（双窗口/陈旧列表）会命中已删除文档：统一固定文案，避免 raw TypeError 经 IPC 直达渲染层
+  const DOCUMENT_MISSING_MESSAGE = '知识库文档不存在或已删除，请刷新列表';
+
+  function assertDocumentExists(documentId) {
+    if (!knowledgeBaseStore.getDocument(documentId)) {
+      throw new Error(DOCUMENT_MISSING_MESSAGE);
+    }
+  }
+
   function debugLog(documentId, event, payload = {}) {
     if (!isDeveloperMode()) {
       return;
@@ -1189,6 +1198,11 @@ function createKnowledgeBaseService({ app, aiService, configStore, knowledgeBase
 
     try {
       const document = getDocument(documentId);
+      // 上传后排队期间文档可能已被删除（activePreparations 尚未登记）：静默收口，不抛 TypeError
+      if (!document) {
+        debugLog(documentId, 'prepare:skip-missing');
+        return;
+      }
       const config = configStore ? configStore.load() : { components: { file_parser: { provider: 'local' } } };
       const documentDir = fromRelative(baseDir, document.document_dir);
       const sourcePath = fromRelative(baseDir, document.source_path);
@@ -1417,13 +1431,15 @@ function createKnowledgeBaseService({ app, aiService, configStore, knowledgeBase
           });
 
           let completedSegments = 0;
-          const runSegment = async (segment) => {
-            const supplementMessages = buildSupplementItemMessages(document.file_name, segment.text, firstItems, segment);
+          // 单段请求收口：全量条目与条目子批共用同一 collectJsonResponse 配置
+          const requestSupplementItems = async (segment, itemsForPrompt, logTitle, itemMode) => {
+            const supplementMessages = buildSupplementItemMessages(document.file_name, segment.text, itemsForPrompt, segment);
             debugLog(documentId, 'ai:supplement-items:start', {
               segment_index: segment.index,
               segment_total: segment.total,
               segment_chars: segment.chars,
-              first_item_count: firstItems.length,
+              first_item_count: itemsForPrompt.length,
+              item_mode: itemMode,
               block_ids: segment.blockIds,
               prefix_chars: String(supplementMessages[0]?.content || '').length,
               suffix_chars: String(supplementMessages[1]?.content || '').length,
@@ -1432,15 +1448,46 @@ function createKnowledgeBaseService({ app, aiService, configStore, knowledgeBase
             const supplement = await aiService.collectJsonResponse({
               messages: supplementMessages,
               response_format: { type: 'json_object' },
-              logTitle: segments.length > 1
-                ? `知识库条目补充-${document.file_name}-第${segment.index}段`
-                : `知识库条目补充-${document.file_name}`,
+              logTitle,
               normalizer: (value) => ({ items: normalizeCandidateItems(value) }),
               validator: validateCandidateItems,
               failureMessage: '知识库条目补充失败，AI 未返回有效 JSON',
               progressLabel: '知识库条目补充',
             });
-            const items = Array.isArray(supplement?.items) ? supplement.items : [];
+            return Array.isArray(supplement?.items) ? supplement.items : [];
+          };
+          const runSegment = async (segment) => {
+            const baseLogTitle = segments.length > 1
+              ? `知识库条目补充-${document.file_name}-第${segment.index}段`
+              : `知识库条目补充-${document.file_name}`;
+            // 与匹配/补漏同构：全量条目超预算时只拆 L2 条目子批，L1 block 前缀不动；
+            // 否则小上下文模型+首轮多条目时请求必然超限，重试永远失败
+            const fullItemMessages = buildSupplementItemMessages(document.file_name, segment.text, firstItems, segment);
+            let items;
+            if (getMessagesContentLength(fullItemMessages) <= unifiedPack.requestBudget) {
+              items = await requestSupplementItems(segment, firstItems, baseLogTitle, 'full');
+            } else {
+              const itemSegmentLimit = getItemSplitBudget(aiService, [
+                buildDocumentBlocksPrefixMessage(segment.text, segment),
+                buildSupplementItemTaskMessage(document.file_name, []),
+              ]);
+              const itemSegments = packItemsIntoSegments(firstItems, itemSegmentLimit);
+              debugLog(documentId, 'ai:supplement-items:item-split', {
+                segment_index: segment.index,
+                item_segment_total: itemSegments.length,
+                item_segment_limit: itemSegmentLimit,
+              });
+              const subLists = [];
+              for (const itemSegment of itemSegments) {
+                subLists.push(await requestSupplementItems(
+                  segment,
+                  itemSegment.items,
+                  `${baseLogTitle}-条目${itemSegment.index}`,
+                  'sub_batch',
+                ));
+              }
+              items = mergeTitleSummaryItems(subLists);
+            }
             completedSegments += 1;
             updateDocument(documentId, {
               status: 'extracting',
@@ -2160,6 +2207,9 @@ function createKnowledgeBaseService({ app, aiService, configStore, knowledgeBase
 
     deleteDocument(documentId) {
       const document = getDocument(documentId);
+      if (!document) {
+        return { success: false, message: DOCUMENT_MISSING_MESSAGE };
+      }
       if (activePreparations.has(documentId) || activeMatches.has(documentId)) {
         throw new Error('该文档正在处理中，请完成后再删除');
       }
@@ -2179,6 +2229,9 @@ function createKnowledgeBaseService({ app, aiService, configStore, knowledgeBase
 
     moveDocument(documentId, targetFolderId, targetDocumentId, position) {
       const document = getDocument(documentId);
+      if (!document) {
+        throw new Error(DOCUMENT_MISSING_MESSAGE);
+      }
       if (activePreparations.has(documentId) || activeMatches.has(documentId)) {
         throw new Error('该文档正在处理中，请完成后再移动');
       }
@@ -2204,7 +2257,17 @@ function createKnowledgeBaseService({ app, aiService, configStore, knowledgeBase
           throw new Error('目标文件夹中已存在同名文档目录，无法移动');
         }
         ensureDir(path.dirname(newDir));
-        fs.renameSync(oldDir, newDir);
+        try {
+          fs.renameSync(oldDir, newDir);
+        } catch (error) {
+          // Windows 下文档正被 Office/WPS 打开时 rename 抛 EBUSY/EPERM，raw OS 消息含本机绝对路径，
+          // 不能经 IPC 直达渲染层 toast（与 R101 prepare/match 净化、R116 插件层同口径）
+          console.error('[knowledge-base] 文档目录移动失败:', documentId, error?.message || error);
+          const busy = ['EBUSY', 'EPERM', 'EACCES'].includes(error?.code);
+          throw new Error(busy
+            ? '移动失败：文档文件可能正被 Office/WPS 打开，请关闭相关文件后重试'
+            : userFacingTaskError(error, '移动失败，请稍后重试'));
+        }
         moveOptions = {
           ...moveOptions,
           documentDir: newDocumentDir,
@@ -2305,6 +2368,9 @@ function createKnowledgeBaseService({ app, aiService, configStore, knowledgeBase
 
     retryDocument(documentId, webContents) {
       const document = getDocument(documentId);
+      if (!document) {
+        return { success: false, message: DOCUMENT_MISSING_MESSAGE };
+      }
       debugLog(documentId, 'ipc:retry-document', { current_status: document.status });
       if (activePreparations.has(documentId) || activeMatches.has(documentId)) {
         return { success: false, message: '该文档正在处理中', document };
@@ -2324,6 +2390,9 @@ function createKnowledgeBaseService({ app, aiService, configStore, knowledgeBase
 
     startMatching(documentId, _batchSize, webContents) {
       const document = getDocument(documentId);
+      if (!document) {
+        return { success: false, message: DOCUMENT_MISSING_MESSAGE, document: null };
+      }
       debugLog(documentId, 'ipc:start-matching', { current_status: document.status });
       if (activeMatches.has(documentId)) {
         return { success: false, message: '该文档正在匹配中', document };
@@ -2341,6 +2410,7 @@ function createKnowledgeBaseService({ app, aiService, configStore, knowledgeBase
     },
 
     readMarkdown(documentId) {
+      assertDocumentExists(documentId);
       return knowledgeBaseStore.readMarkdown(documentId);
     },
 
@@ -2349,10 +2419,12 @@ function createKnowledgeBaseService({ app, aiService, configStore, knowledgeBase
     },
 
     readItems(documentId) {
+      assertDocumentExists(documentId);
       return knowledgeBaseStore.readItems(documentId);
     },
 
     readAnalysis(documentId) {
+      assertDocumentExists(documentId);
       return knowledgeBaseStore.readAnalysis(documentId, { debugLogPath: isDeveloperMode() ? getDebugLogPath(app, documentId) : '' });
     },
   };
@@ -2368,6 +2440,8 @@ module.exports = {
     packBlocksIntoSegments,
     packItemsIntoSegments,
     getKnowledgeBaseSegmentLimit,
+    getItemSplitBudget,
+    buildSupplementItemTaskMessage,
     buildUnifiedBlockSegments,
     buildInitialItemMessages,
     buildSupplementItemMessages,

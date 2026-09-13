@@ -26,6 +26,9 @@ const textTokenStatsStore = require('./textTokenStatsStore.cjs');
 const { normalizeTokenUsage } = textTokenStatsStore;
 
 const AI_REQUEST_TIMEOUT_MS = 600000;
+// 模型列表/模型信息等元数据请求的超时上限：连接挂起时不能让设置页按钮
+// 依赖 undici 默认 300s 超时长时间空转
+const METADATA_REQUEST_TIMEOUT_MS = 60000;
 const MULTIMODAL_IMAGE_MAX_EDGE = 2048;
 const MULTIMODAL_IMAGE_JPEG_QUALITY = 85;
 
@@ -912,7 +915,9 @@ function createAgentChatRequestBody(config, sourceBody) {
 
   const body = {
     ...source,
-    model: config.model_name,
+    // 与 createChatRequestBody 同口径：废弃模型自动切换替代模型，
+    // 否则同一配置下常规 chat 走替代模型、Agent 路径却发原始模型名被上游拒绝
+    model: JINLONG_DEPRECATED_MODEL_MAP[config.model_name] || config.model_name,
     messages,
     stream: normalizeTextRequestMode(config) === 'stream',
   };
@@ -1074,7 +1079,7 @@ async function readSseJsonStream(response, options = {}) {
 }
 
 async function readOpenAIChatStream(response) {
-  const state = { usage: null, contentParts: [] };
+  const state = { usage: null, contentParts: [], finishReason: '' };
 
   await readSseJsonStream(response, {
     unreadableMessage: 'AI 流式响应不可读',
@@ -1086,7 +1091,15 @@ async function readOpenAIChatStream(response) {
       }
 
       const choices = Array.isArray(payload?.choices) ? payload.choices : [];
-      choices.forEach((choice) => appendStreamChoiceContent(choice, state.contentParts));
+      choices.forEach((choice) => {
+        // finish_reason 由最后一个 chunk 携带（早期 chunk 为 null）：不捕获的话
+        // 合成响应永远不知道输出是否被 max_tokens 截断，流式（默认请求方式）下
+        // fail_on_truncation 与 JSON 截断快速失败会整体失效
+        if (typeof choice?.finish_reason === 'string' && choice.finish_reason) {
+          state.finishReason = choice.finish_reason;
+        }
+        appendStreamChoiceContent(choice, state.contentParts);
+      });
     },
   });
 
@@ -1094,9 +1107,10 @@ async function readOpenAIChatStream(response) {
   return {
     content,
     usage: state.usage,
+    finishReason: state.finishReason,
     responseData: {
       stream: true,
-      choices: [{ message: { content } }],
+      choices: [{ message: { content }, ...(state.finishReason ? { finish_reason: state.finishReason } : {}) }],
       usage: state.usage,
     },
   };
@@ -1608,6 +1622,9 @@ async function testOpenAICompatibleImageModel(app, config, provider) {
     const firstImage = responseData.data?.[0] || {};
     const imageUrl = firstImage.url || '';
     const imageData = firstImage.b64_json || '';
+    // 渲染层用该 mime 拼预览 data URL（SettingsPage imageTestPreview），
+    // 服务商返回非 PNG 的 b64 时硬编码 'image/png' 会导致预览渲染异常
+    const mimeType = firstImage.mime_type || firstImage.mimeType || 'image/png';
 
     if (!imageUrl && !imageData) {
       throw createAiResponseDataError(getOpenAICompatibleImageFailureMessage(responseData, `${meta.label}生图测试未返回图片数据`), responseData);
@@ -1624,7 +1641,7 @@ async function testOpenAICompatibleImageModel(app, config, provider) {
       result: {
         image_url: imageUrl,
         image_data: imageData ? '[base64 omitted]' : '',
-        mime_type: 'image/png',
+        mime_type: mimeType,
       },
       created_at: new Date().toISOString(),
     });
@@ -1634,7 +1651,7 @@ async function testOpenAICompatibleImageModel(app, config, provider) {
       message: imageUrl ? `测试成功：已生成图片 ${imageUrl}` : '测试成功：已返回生图结果',
       image_url: imageUrl,
       image_data: imageData,
-      mime_type: 'image/png',
+      mime_type: mimeType,
     };
   } catch (error) {
     if (!analyticsTracked) {
@@ -2290,11 +2307,14 @@ async function runComfyUIImageGeneration(app, config, request, options = {}) {
       status: 'pending',
       created_at: new Date().toISOString(),
     });
-    const submitted = await runWithAiRetry(() => runWithOperationTimeout(
+    // 提交非幂等（submitComfyUIPrompt 内已标记 retryable:false），这里只包超时、
+    // 不再包 runWithAiRetry：操作超时的 AbortError 属可重试错误，包进重试层会
+    // 在 /prompt 挂起超过 600s 时对同一提示词重复提交（ComfyUI 双排）
+    const submitted = await runWithOperationTimeout(
       (signal) => submitComfyUIPrompt(baseUrl, workflow, { signal }),
       AI_REQUEST_TIMEOUT_MS,
       request.signal,
-    ));
+    );
     const promptId = submitted?.prompt_id;
     if (!promptId) {
       throw createAiResponseDataError('ComfyUI 未返回任务 ID', submitted);
@@ -2411,7 +2431,7 @@ async function generateImageWithConfig(app, config, request) {
   throw new Error('当前生图服务商暂不支持正文配图');
 }
 
-function createAiService({ app, configStore }) {
+function createAiService({ app, configStore, metadataTimeoutMs = METADATA_REQUEST_TIMEOUT_MS } = {}) {
   const textRequestQueue = createAiRequestQueue({
     defaultLimit: 10,
     getLimit() {
@@ -2612,12 +2632,16 @@ function createAiService({ app, configStore }) {
 
       let data = null;
       try {
-        data = await runWithAiRetry(async () => {
+        // 总超时在外层、快速失败重试在内层：挂起在 metadataTimeoutMs 被掐断，
+        // ECONNREFUSED 等快速失败在窗口内重试；内层重试感知超时信号，超时后的
+        // 孤儿重试立即终止，不空耗 3s/5s 重试延迟
+        data = await runWithOperationTimeout((signal) => runWithAiRetry(async () => {
           let response = null;
           try {
             response = await fetch(`${trimBaseUrl(config.base_url)}/models`, {
               method: 'GET',
               headers: createHeaders(config.api_key),
+              signal,
             });
           } catch (error) {
             throw markAiRequestError(error, { retryable: true });
@@ -2629,10 +2653,13 @@ function createAiService({ app, configStore }) {
           } catch (error) {
             throw markAiRequestError(error, { retryable: true });
           }
-        });
+        }, { signal }), metadataTimeoutMs);
       } catch (error) {
-        emitAiHttpErrorToWindows(error);
-        throw error;
+        const timeoutError = error?.name === 'AbortError'
+          ? new Error('获取模型列表失败：请求超时，请检查网络后重试')
+          : error;
+        emitAiHttpErrorToWindows(timeoutError);
+        throw timeoutError;
       }
 
       return {
@@ -2650,7 +2677,18 @@ function createAiService({ app, configStore }) {
         return { success: false, message: '请先填写文本模型名称', modelName: '', model: null, syncedAt: '' };
       }
 
-      const response = await fetch(`${MODEL_INFO_ENDPOINT}?modelName=${encodeURIComponent(normalizedModelName)}`);
+      let response;
+      try {
+        response = await runWithOperationTimeout(
+          (signal) => fetch(`${MODEL_INFO_ENDPOINT}?modelName=${encodeURIComponent(normalizedModelName)}`, { signal }),
+          metadataTimeoutMs,
+        );
+      } catch (error) {
+        if (error?.name === 'AbortError') {
+          throw new Error('获取模型信息失败：请求超时，请检查网络后重试');
+        }
+        throw error;
+      }
       const data = await response.json().catch(() => null);
       if (!response.ok || !data || data.code !== 0) {
         throw new Error(data?.message || `获取模型信息失败：HTTP ${response.status}`);
